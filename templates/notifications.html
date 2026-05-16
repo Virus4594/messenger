@@ -1,43 +1,45 @@
 {% extends "base.html" %}
 
+{% block title %}Уведомления - Messenger{% endblock %}
+
 {% block content %}
-<div class="notifications-container">
-    <h2>Уведомления</h2>
+<div class="container">
+    <h1 style="margin-bottom: 30px;">🔔 Уведомления</h1>
     
-    {% if notifications %}
-        <p>Всего уведомлений: {{ notifications|length }}</p>
-        
-        {% for item in notifications %}
-        <div class="notification-item {% if not item.notification.is_read %}unread{% endif %}">
-            <div class="notification-content">
-                <p><strong>Тип:</strong> {{ item.notification.type }}</p>
-                <p><strong>Содержание:</strong> {{ item.notification.content }}</p>
-                
+    <div id="notificationsContainer">
+        {% if notifications %}
+            {% for item in notifications %}
+            <div class="notification-item {% if not item.notification.is_read %}unread{% endif %}" style="background: white; padding: 15px; border-radius: 10px; margin-bottom: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                <p><strong>{{ item.notification.type }}</strong></p>
+                <p>{{ item.notification.content }}</p>
                 {% if item.sender %}
-                <p><strong>От:</strong> {{ item.sender.username }}</p>
+                <p><small>От: {{ item.sender.username }}</small></p>
                 {% endif %}
-                
-                <p><strong>Время:</strong> {{ item.notification.created_at.strftime('%H:%M %d.%m.%Y') }}</p>
+                <p><small>{{ item.notification.created_at.strftime('%H:%M %d.%m.%Y') }}</small></p>
                 
                 {% if item.notification.type == 'friend_request' and item.sender %}
-                <div class="notification-actions">
-                    <form action="{{ url_for('accept_friend', friend_id=item.sender.id) }}" 
-                          method="POST" style="display: inline;">
+                <div style="margin-top: 10px;">
+                    <form action="{{ url_for('accept_friend', friend_id=item.sender.id) }}" method="POST" style="display: inline;">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-success btn-sm">Принять</button>
+                        <button type="submit" class="btn btn-success btn-sm">✅ Принять</button>
                     </form>
-                    <form action="{{ url_for('reject_friend', friend_id=item.sender.id) }}" 
-                          method="POST" style="display: inline;">
+                    <form action="{{ url_for('reject_friend', friend_id=item.sender.id) }}" method="POST" style="display: inline;">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-danger btn-sm">Отклонить</button>
+                        <button type="submit" class="btn btn-danger btn-sm">❌ Отклонить</button>
                     </form>
                 </div>
                 {% endif %}
+                
+                {% if item.notification.type == 'message' and item.sender %}
+                <a href="{{ url_for('chat', username=item.sender.username) }}" class="btn btn-sm" style="margin-top: 10px;">💬 Открыть чат</a>
+                {% endif %}
             </div>
-        </div>
-        {% endfor %}
-    {% else %}
-        <p>У вас нет уведомлений</p>
-    {% endif %}
+            {% endfor %}
+        {% else %}
+            <div style="text-align: center; padding: 40px; color: #666;">
+                <p>У вас пока нет уведомлений</p>
+            </div>
+        {% endif %}
+    </div>
 </div>
 {% endblock %}
