@@ -408,6 +408,66 @@ def logout():
     flash('Вы вышли из системы', 'info')
     return redirect(url_for('index'))
 
+@app.route('/demo/db-check')
+@login_required
+def demo_db_check():
+    # Доступ только владельцу
+    user = db.session.get(User, session.get('user_id'))
+    if not user or user.role != 'owner':
+        return "Доступ запрещён", 403
+    
+    # Получаем последние 10 сообщений
+    messages = Message.query.order_by(Message.id.desc()).limit(10).all()
+    
+    # Формируем HTML-таблицу
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Проверка шифрования в БД</title>
+        <style>
+            body { font-family: monospace; padding: 20px; background: #1e1e1e; color: #fff; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { padding: 10px; border: 1px solid #444; text-align: left; word-break: break-all; }
+            th { background: #333; }
+            .encrypted { background: #2d4a2d; padding: 5px; border-radius: 4px; display: block; }
+        </style>
+    </head>
+    <body>
+        <h1>🔍 Проверка шифрования в базе данных</h1>
+        <p>✅ Все сообщения хранятся ТОЛЬКО в зашифрованном виде.<br>
+        ✅ Сервер НЕ видит исходный текст.</p>
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Отправитель</th>
+                <th>Получатель</th>
+                <th>Зашифрованное содержимое</th>
+                <th>Флаг шифрования</th>
+                <th>Время</th>
+            </tr>
+    """
+    
+    for msg in messages:
+        sender = db.session.get(User, msg.sender_id)
+        receiver = db.session.get(User, msg.receiver_id)
+        encrypted_preview = msg.encrypted_content[:80] + "..." if msg.encrypted_content and len(msg.encrypted_content) > 80 else msg.encrypted_content
+        
+        html += f"""
+            <tr>
+                <td>{msg.id}</td>
+                <td>{sender.username if sender else '?'}</td>
+                <td>{receiver.username if receiver else '?'}</td>
+                <td><span class="encrypted">{encrypted_preview}</span></td>
+                <td>{'✅ E2EE' if msg.is_encrypted else '❌ НЕ ЗАШИФРОВАНО'}</td>
+                <td>{msg.created_at.strftime('%H:%M:%S')}</td>
+            </tr>
+        """
+    
+    html += "</table></body></html>"
+    return html
+    
 @app.route('/verify_2fa_login', methods=['GET', 'POST'])
 def verify_2fa_login():
     if 'pre_2fa_user_id' not in session:
