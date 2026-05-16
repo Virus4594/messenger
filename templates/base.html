@@ -31,9 +31,9 @@
                 <a href="{{ url_for('search') }}">🔍 Поиск</a>
                 <a href="{{ url_for('profile') }}">👤 Профиль</a>
                 <a href="{{ url_for('notifications') }}" class="notification-link" style="position: relative;">
-                🔔 Уведомления
-                <span class="notification-badge" style="display: none; position: absolute; top: -8px; right: -12px; background: #dc3545; color: white; border-radius: 50%; padding: 2px 6px; font-size: 10px;"></span>
-                </a>
+🔔 Уведомления
+<span class="notification-badge" style="display: none; position: absolute; top: -8px; right: -12px; background: #dc3545; color: white; border-radius: 50%; padding: 2px 6px; font-size: 10px;"></span>
+</a>
                 <a href="{{ url_for('settings') }}">⚙️ Настройки</a>
                 {% if current_user.role in ['owner', 'admin', 'moderator'] %}
                 <a href="{{ url_for('admin.dashboard') }}">👑 Админ-панель</a>
