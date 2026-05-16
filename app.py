@@ -1681,6 +1681,25 @@ def internal_error(error):
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+        # Автоматически создаём владельца для демо
+        from models import User
+        from auth import hash_password
+        import os
+        owner_username = os.environ.get('OWNER_USERNAME', 'demo_admin')
+        owner_password = os.environ.get('OWNER_PASSWORD', 'Demo1234!')
+        owner_email = os.environ.get('OWNER_EMAIL', 'admin@demo.com')
+        owner = User.query.filter_by(role='owner').first()
+        if not owner:
+            owner = User(
+                username=owner_username,
+                email=owner_email,
+                password_hash=hash_password(owner_password),
+                role='owner',
+                email_verified=True
+            )
+            db.session.add(owner)
+            db.session.commit()
+            print(f"✅ Демо-владелец создан: {owner_username} / {owner_password}")
     
     print("=" * 50)
     print("🚀 Messenger запущен!")
@@ -1690,7 +1709,7 @@ if __name__ == '__main__':
     print("=" * 50)
     
     socketio.run(app, 
-         host='0.0.0.0',
-         port=int(os.environ.get('PORT', 5000)),
-         debug=False
-         )
+             host='0.0.0.0',
+             port=int(os.environ.get('PORT', 5000)),
+             debug=False
+             )
