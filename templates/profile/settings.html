@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}Настройки - Messenger{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1 style="margin-bottom: 30px;">⚙️ Настройки</h1>
+    
+    <div class="card">
+        <h2 style="margin-bottom: 20px;">👤 Профиль</h2>
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label>Имя пользователя</label>
+                <input type="text" name="username" class="form-control" value="{{ user.username }}">
+            </div>
+            <button type="submit" class="btn">Сохранить</button>
+        </form>
+    </div>
+    
+    <div class="card">
+        <h2 style="margin-bottom: 20px;">🔐 Безопасность</h2>
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label>Текущий пароль</label>
+                <input type="password" name="current_password" class="form-control">
+            </div>
+            <div class="form-group">
+                <label>Новый пароль</label>
+                <input type="password" name="new_password" class="form-control">
+            </div>
+            <button type="submit" class="btn">Сменить пароль</button>
+        </form>
+    </div>
+    
+    <div class="card">
+        <h2 style="margin-bottom: 20px;">🎨 Внешний вид</h2>
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+            <div>
+                <strong>Тёмная тема</strong>
+                <p style="color: var(--text-secondary); font-size: 13px; margin-top: 5px;">Включить тёмную тему для всего приложения</p>
+            </div>
+            <label class="theme-switch">
+                <input type="checkbox" id="darkModeToggle">
+                <span class="theme-slider"></span>
+            </label>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Переключатель темы */
+.theme-switch {
+    position: relative;
+    display: inline-block;
+    width: 52px;
+    height: 28px;
+}
+
+.theme-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.theme-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #cbd5e1;
+    transition: 0.3s;
+    border-radius: 34px;
+}
+
+.theme-slider:before {
+    position: absolute;
+    content: "☀️";
+    height: 24px;
+    width: 24px;
+    left: 2px;
+    bottom: 2px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+}
+
+input:checked + .theme-slider {
+    background-color: var(--primary);
+}
+
+input:checked + .theme-slider:before {
+    transform: translateX(24px);
+    content: "🌙";
+}
+</style>
+
+<script>
+    // Переключение темы из настроек
+    function initThemeToggle() {
+        const isDark = document.documentElement.hasAttribute('data-theme');
+        const toggle = document.getElementById('darkModeToggle');
+        if (toggle) {
+            toggle.checked = isDark;
+            toggle.addEventListener('change', function() {
+                if (this.checked) {
+                    document.documentElement.setAttribute('data-theme', 'dark');
+                    localStorage.setItem('theme', 'dark');
+                } else {
+                    document.documentElement.removeAttribute('data-theme');
+                    localStorage.setItem('theme', 'light');
+                }
+            });
+        }
+    }
+    
+    initThemeToggle();
+</script>
+{% endblock %}

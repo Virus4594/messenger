@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:15
+    container_name: messenger_db
+    environment:
+      POSTGRES_USER: messenger
+      POSTGRES_PASSWORD: messenger123
+      POSTGRES_DB: messenger
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: messenger_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  app:
+    build: .
+    container_name: messenger_app
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+      - DATABASE_URL=postgresql://messenger:messenger123@db:5432/messenger
+      - REDIS_URL=redis://redis:6379
+      - FLASK_ENV=development
+    ports:
+      - "5000:5000"
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./static:/app/static
+      - ./uploads:/app/uploads
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

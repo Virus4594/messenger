@@ -1,0 +1,75 @@
+{% extends "admin/base_admin.html" %}
+
+{% block admin_content %}
+<h1>💬 Управление комментариями</h1>
+
+<div class="comments-table-container">
+    <table class="comments-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Комментарий</th>
+                <th>Автор</th>
+                <th>Пост</th>
+                <th>Дата</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for comment in comments.items %}
+            <tr>
+                <td>{{ comment.id }}</td>
+                <td>{{ comment.content[:100] }}</td>
+                <td>{{ comment.author.username }}</td>
+                <td>{{ comment.post.title[:30] }}</td>
+                <td>{{ comment.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                <td>
+                    <button class="btn-delete-comment" data-comment-id="{{ comment.id }}">
+                        🗑️ Удалить
+                    </button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="pagination">
+    {% if comments.has_prev %}
+        <a href="{{ url_for('admin.comments', page=comments.prev_num) }}">← Назад</a>
+    {% endif %}
+    <span>Страница {{ comments.page }} из {{ comments.pages }}</span>
+    {% if comments.has_next %}
+        <a href="{{ url_for('admin.comments', page=comments.next_num) }}">Вперед →</a>
+    {% endif %}
+</div>
+
+<script>
+document.querySelectorAll('.btn-delete-comment').forEach(btn => {
+    btn.addEventListener('click', async function() {
+        let commentId = this.dataset.commentId;
+        
+        if (!confirm('Удалить комментарий?')) return;
+        
+        try {
+            let response = await fetch(`/admin/comments/${commentId}/delete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            
+            let data = await response.json();
+            
+            if (data.success) {
+                alert('✅ Комментарий удален');
+                location.reload();
+            } else {
+                alert('❌ ' + data.error);
+            }
+        } catch (error) {
+            alert('❌ Ошибка');
+        }
+    });
+});
+</script>
+{% endblock %}

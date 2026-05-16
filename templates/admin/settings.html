@@ -1,0 +1,26 @@
+{% extends "admin/base_admin.html" %}
+
+{% block admin_content %}
+<h1>⚙️ Системные настройки</h1>
+
+<div class="settings-section">
+    <h3>👑 Владелец системы</h3>
+    <p>Владелец имеет полный доступ ко всем функциям и может назначать администраторов.</p>
+    <p>Текущий владелец: <strong>{{ current_user.username }}</strong></p>
+</div>
+
+<div class="settings-section">
+    <h3>🔐 Права доступа</h3>
+    <ul>
+        <li><strong>👑 Владелец</strong> - полный доступ, назначение ролей, удаление пользователей</li>
+        <li><strong>👑 Администратор</strong> - блокировка пользователей, удаление контента</li>
+        <li><strong>🛡️ Модератор</strong> - удаление постов и комментариев</li>
+        <li><strong>👤 Пользователь</strong> - базовые функции</li>
+    </ul>
+</div>
+
+<div class="settings-section">
+    <h3>📧 Email настройки</h3>
+    <p>Для работы email верификации настройте SMTP в файле .env</p>
+</div>
+{% endblock %}

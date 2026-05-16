@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+
+{% block title %}Лента новостей - Messenger{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div style="display: flex; gap: 30px; flex-wrap: wrap;">
+        <!-- Левая колонка - создание поста -->
+        <div style="flex: 1; min-width: 300px;">
+            <div class="card">
+                <h3 style="margin-bottom: 20px;">Создать пост</h3>
+                
+                <form method="POST" action="{{ url_for('create_post') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    
+                    <div class="form-group">
+                        <input type="text" name="title" class="form-control" 
+                               placeholder="Заголовок поста" 
+                               maxlength="120" 
+                               required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <textarea name="content" class="form-control" 
+                                  rows="6" 
+                                  placeholder="Что у вас нового?" 
+                                  required></textarea>
+                    </div>
+                    
+                    <button type="submit" class="btn" style="width: 100%;">
+                        📝 Опубликовать
+                    </button>
+                </form>
+            </div>
+        </div>
+        
+        <!-- Правая колонка - лента постов -->
+        <div style="flex: 2; min-width: 500px;">
+            <h2 style="margin-bottom: 20px;">Лента новостей</h2>
+            
+            {% if posts %}
+                {% for post in posts %}
+                <div class="card" style="margin-bottom: 20px;">
+                    <!-- Шапка поста с аватаром -->
+                    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
+                        <div class="post-avatar" style="width: 50px; height: 50px; border-radius: 50%; background-image: url('{{ url_for('get_avatar', user_id=post.author.id) }}'); background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; color: white; background-color: #667eea;">
+                            {% if not post.author.avatar %}
+                                {{ post.author.username[:1].upper() }}
+                            {% endif %}
+                        </div>
+                        <div>
+                            <strong style="font-size: 18px;">
+                                <a href="{{ url_for('user_profile', username=post.author.username) }}" 
+                                   style="color: #333; text-decoration: none;">
+                                    {{ post.author.username }}
+                                </a>
+                            </strong>
+                            <br>
+                            <small style="color: #666;">
+                                {{ post.created_at.strftime('%d.%m.%Y в %H:%M') }}
+                            </small>
+                        </div>
+                    </div>
+                    
+                    <h3 style="margin: 15px 0 10px 0;">{{ post.title }}</h3>
+                    <p style="white-space: pre-wrap; line-height: 1.6;">{{ post.content }}</p>
+                    
+                    <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee;">
+                        <div style="display: flex; gap: 20px;">
+                            <form action="{{ url_for('like_post', post_id=post.id) }}" method="POST" style="display: inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" style="background: none; border: none; cursor: pointer; font-size: 16px;">
+                                    {% if current_user in post.likes %}❤️{% else %}🤍{% endif %}
+                                    <span id="likes-count-{{ post.id }}">{{ post.likes|length }}</span>
+                                </button>
+                            </form>
+                            
+                            <button onclick="toggleComments({{ post.id }})" style="background: none; border: none; cursor: pointer; font-size: 16px;">
+                                💬 {{ post.comments.count() }}
+                            </button>
+                        </div>
+                        
+                        <!-- Кнопки редактирования/удаления -->
+                        <div style="margin-top: 10px; display: flex; gap: 10px;">
+                            {% if current_user.id == post.author.id %}
+                                <a href="{{ url_for('edit_post', post_id=post.id) }}" class="post-action" style="color: #f59e0b; text-decoration: none;">✏️ Редактировать</a>
+                                <form action="{{ url_for('delete_post', post_id=post.id) }}" method="POST" style="display: inline;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="post-action" style="color: #dc3545; background: none; border: none; cursor: pointer;" onclick="return confirm('Удалить пост?')">🗑️ Удалить</button>
+                                </form>
+                            {% elif current_user.role in ['admin', 'moderator', 'owner'] %}
+                                <form action="{{ url_for('delete_post', post_id=post.id) }}" method="POST" style="display: inline;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="post-action" style="color: #dc3545; background: none; border: none; cursor: pointer;" onclick="return confirm('Удалить пост?')">🗑️ Удалить (админ)</button>
+                                </form>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Комментарии -->
+                        <div id="comments-{{ post.id }}" style="display: none; margin-top: 20px;">
+                            <div id="comments-list-{{ post.id }}">
+                                {% for comment in post.comments %}
+                                <div style="padding: 10px; background: #f8f9fa; margin-bottom: 10px; border-radius: 8px;">
+                                    <strong>{{ comment.author.username }}</strong>
+                                    <small style="color: #666; float: right;">{{ comment.created_at.strftime('%H:%M') }}</small>
+                                    <p style="margin: 5px 0 0 0;">{{ comment.content }}</p>
+                                </div>
+                                {% else %}
+                                <p style="color: #666; text-align: center; padding: 20px;">Нет комментариев. Будьте первым!</p>
+                                {% endfor %}
+                            </div>
+                            
+                            <form action="{{ url_for('add_comment', post_id=post.id) }}" method="POST" style="margin-top: 15px;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <div style="display: flex; gap: 10px;">
+                                    <input type="text" name="content" class="form-control" placeholder="Написать комментарий..." required>
+                                    <button type="submit" class="btn">Отправить</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="card" style="text-align: center; padding: 60px;">
+                    <p>Нет постов от друзей. Добавьте друзей или создайте первый пост!</p>
+                    <a href="{{ url_for('search') }}" class="btn" style="margin-top: 20px;">Найти друзей</a>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleComments(postId) {
+    const commentsDiv = document.getElementById(`comments-${postId}`);
+    if (commentsDiv.style.display === 'none') {
+        commentsDiv.style.display = 'block';
+    } else {
+        commentsDiv.style.display = 'none';
+    }
+}
+</script>
+
+<style>
+.post-action {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    transition: opacity 0.2s;
+}
+
+.post-action:hover {
+    opacity: 0.7;
+}
+</style>
+{% endblock %}

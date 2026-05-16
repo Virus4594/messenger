@@ -1,0 +1,81 @@
+{% extends "admin/base_admin.html" %}
+
+{% block admin_content %}
+<h1>📊 Панель управления</h1>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">👥</div>
+        <div class="stat-value">{{ stats.users }}</div>
+        <div class="stat-label">Пользователей</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">📝</div>
+        <div class="stat-value">{{ stats.posts }}</div>
+        <div class="stat-label">Постов</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">💬</div>
+        <div class="stat-value">{{ stats.comments }}</div>
+        <div class="stat-label">Комментариев</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">💬</div>
+        <div class="stat-value">{{ stats.messages }}</div>
+        <div class="stat-label">Сообщений</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🟢</div>
+        <div class="stat-value">{{ stats.online }}</div>
+        <div class="stat-label">Сейчас онлайн</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🔒</div>
+        <div class="stat-value">{{ stats.banned }}</div>
+        <div class="stat-label">Заблокировано</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">👑</div>
+        <div class="stat-value">{{ stats.admins }}</div>
+        <div class="stat-label">Администраторов</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🛡️</div>
+        <div class="stat-value">{{ stats.moderators }}</div>
+        <div class="stat-label">Модераторов</div>
+    </div>
+</div>
+
+<div class="admin-sections">
+    <div class="section">
+        <h3>🆕 Последние пользователи</h3>
+        <div class="user-list">
+            {% for user in recent_users %}
+            <div class="user-item">
+                <div class="user-avatar">{{ user.username[:1].upper() }}</div>
+                <div class="user-info">
+                    <div class="user-name">{{ user.username }}</div>
+                    <div class="user-meta">{{ user.created_at.strftime('%d.%m.%Y') }}</div>
+                </div>
+                <div class="user-role-badge {{ user.role }}">{{ user.role }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    
+    <div class="section">
+        <h3>📝 Последние посты</h3>
+        <div class="post-list">
+            {% for post in recent_posts %}
+            <div class="post-item">
+                <div class="post-title">{{ post.title[:40] }}</div>
+                <div class="post-meta">
+                    <span>{{ post.author.username }}</span>
+                    <span>{{ post.created_at.strftime('%d.%m.%Y') }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

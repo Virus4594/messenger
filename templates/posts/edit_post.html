@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Редактировать пост{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="card" style="max-width: 800px; margin: 0 auto;">
+        <h2 style="text-align: center; margin-bottom: 30px;">✏️ Редактировать пост</h2>
+        
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            
+            <div class="form-group">
+                <label>Заголовок:</label>
+                <input type="text" name="title" class="form-control" value="{{ post.title }}" required maxlength="120">
+            </div>
+            
+            <div class="form-group">
+                <label>Содержание:</label>
+                <textarea name="content" class="form-control" rows="10" required>{{ post.content }}</textarea>
+            </div>
+            
+            <div style="display: flex; gap: 10px;">
+                <button type="submit" class="btn" style="flex: 1;">💾 Сохранить</button>
+                <a href="{{ url_for('feed') }}" class="btn" style="background: #6c757d; flex: 1; text-align: center;">Отмена</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="admin-container">
+    <div class="admin-sidebar">
+        <div class="admin-logo">
+            <h2>👑 Админ-панель</h2>
+        </div>
+        <nav class="admin-nav-menu">
+            <a href="{{ url_for('admin.dashboard') }}" class="admin-nav-link {% if request.endpoint == 'admin.dashboard' %}active{% endif %}">
+                📊 Панель управления
+            </a>
+            <a href="{{ url_for('admin.statistics') }}" class="admin-nav-link {% if request.endpoint == 'admin.statistics' %}active{% endif %}">
+                📈 Статистика
+            </a>
+            <a href="{{ url_for('admin.users') }}" class="admin-nav-link {% if request.endpoint == 'admin.users' %}active{% endif %}">
+                👥 Пользователи
+            </a>
+            <a href="{{ url_for('admin.posts') }}" class="admin-nav-link {% if request.endpoint == 'admin.posts' %}active{% endif %}">
+                📝 Посты
+            </a>
+            <a href="{{ url_for('admin.comments') }}" class="admin-nav-link {% if request.endpoint == 'admin.comments' %}active{% endif %}">
+                💬 Комментарии
+            </a>
+            {% if current_user and current_user.role == 'owner' %}
+            <a href="{{ url_for('admin.settings') }}" class="admin-nav-link {% if request.endpoint == 'admin.settings' %}active{% endif %}">
+                ⚙️ Настройки
+            </a>
+            {% endif %}
+        </nav>
+        <div class="admin-footer">
+            <small>Вы вошли как <strong>{{ current_user.username }}</strong></small>
+            <small class="admin-role-badge">{{ current_user.role }}</small>
+        </div>
+    </div>
+    
+    <div class="admin-content">
+        {% block admin_content %}{% endblock %}
+    </div>
+</div>
+{% endblock %}

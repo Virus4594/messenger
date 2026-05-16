@@ -1,0 +1,1351 @@
+{% extends "base.html" %}
+
+{% block title %}Чат с {{ other_user.username }}{% endblock %}
+
+{% block content %}
+<div class="chat-page">
+    <div class="chat-container">
+        <div class="chat-header">
+            <div class="chat-user-info">
+                <div class="chat-avatar" style="background-image: url('{{ url_for('get_avatar', user_id=other_user.id) }}'); background-size: cover; background-position: center;">
+                    {% if not other_user.avatar %}
+                        {{ other_user.username[:1].upper() }}
+                    {% endif %}
+                </div>
+                <div class="chat-user-details">
+                    <h3>{{ other_user.username }}</h3>
+                    <div class="chat-user-status">
+                        <span class="status-badge" id="userStatusBadge">
+                            {% if other_user.is_online %}🟢 Онлайн{% else %}⚫ Не в сети{% endif %}
+                        </span>
+                        <span id="encryptionBadge" class="encryption-badge">🔒 E2EE</span>
+                    </div>
+                </div>
+            </div>
+            <button id="verifyKeyBtn" class="key-btn" title="Проверить ключ">🔑</button>
+            <a href="{{ url_for('messages') }}" class="back-btn">← Назад</a>
+        </div>
+
+        <div class="chat-messages-area" id="chatMessagesArea">
+            <div class="messages-list" id="messagesList">
+                <div class="loading-messages">📥 Загрузка сообщений...</div>
+            </div>
+        </div>
+
+        <div id="typingIndicator" class="typing-indicator" style="display: none;">
+            <div class="typing-dots"><span></span><span></span><span></span></div>
+            <span id="typingUsername"></span> печатает...
+        </div>
+
+        <div class="chat-input-area">
+            <div class="input-wrapper">
+                <button id="stickerBtn" class="sticker-btn" type="button" title="Стикеры">😊</button>
+                <button id="attachmentBtn" class="attachment-btn" type="button" title="Прикрепить">📎</button>
+                <textarea id="messageInput" placeholder="Сообщение..." rows="1"></textarea>
+                <button id="sendButton" class="send-btn" type="button" title="Отправить">📤</button>
+            </div>
+            
+            <div id="stickerPanel" class="sticker-panel" style="display: none;">
+                <div class="sticker-grid"></div>
+            </div>
+            
+            <div id="attachmentMenu" class="attachment-menu" style="display: none;">
+                <div class="attachment-menu-overlay"></div>
+                <div class="attachment-menu-content">
+                    <button class="attachment-option" data-type="camera" id="cameraOption">
+                        <div class="attachment-icon camera">📷</div>
+                        <span>Камера</span>
+                    </button>
+                    <button class="attachment-option" data-type="gallery" id="galleryOption">
+                        <div class="attachment-icon gallery">🖼️</div>
+                        <span>Галерея</span>
+                    </button>
+                    <button class="attachment-option" data-type="file" id="fileOption">
+                        <div class="attachment-icon file">📁</div>
+                        <span>Файл</span>
+                    </button>
+                    <button class="attachment-option" data-type="document" id="documentOption">
+                        <div class="attachment-icon document">📄</div>
+                        <span>Документ</span>
+                    </button>
+                    <button class="attachment-option" data-type="video" id="videoOption">
+                        <div class="attachment-icon video">🎥</div>
+                        <span>Видео</span>
+                    </button>
+                    <button class="attachment-option" data-type="audio" id="audioOption">
+                        <div class="attachment-icon audio">🎵</div>
+                        <span>Аудио</span>
+                    </button>
+                    <button class="attachment-option" data-type="location" id="locationOption">
+                        <div class="attachment-icon location">📍</div>
+                        <span>Локация</span>
+                    </button>
+                    <button class="attachment-option" data-type="contact" id="contactOption">
+                        <div class="attachment-icon contact">👤</div>
+                        <span>Контакт</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<input type="file" id="galleryInput" accept="image/*" style="display: none;">
+<input type="file" id="fileInputUniversal" accept="*/*" style="display: none;">
+<input type="file" id="documentInput" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.rtf,.odt" style="display: none;">
+<input type="file" id="videoInput" accept="video/*" style="display: none;">
+<input type="file" id="audioInput" accept="audio/*" style="display: none;">
+<input type="file" id="cameraInput" accept="image/*" style="display: none;">
+
+<div id="reactionPicker" class="reaction-picker" style="display: none;">
+    <div class="reaction-emoji" data-emoji="👍">👍</div>
+    <div class="reaction-emoji" data-emoji="❤️">❤️</div>
+    <div class="reaction-emoji" data-emoji="😂">😂</div>
+    <div class="reaction-emoji" data-emoji="😮">😮</div>
+    <div class="reaction-emoji" data-emoji="😢">😢</div>
+    <div class="reaction-emoji" data-emoji="😡">😡</div>
+    <div class="reaction-emoji" data-emoji="🎉">🎉</div>
+    <div class="reaction-emoji" data-emoji="🔥">🔥</div>
+</div>
+
+<div id="attachmentPreview" class="attachment-preview" style="display: none;">
+    <div class="preview-header">
+        <span>Предпросмотр</span>
+        <button id="closePreview" class="close-preview">✕</button>
+    </div>
+    <div class="preview-content">
+        <img id="previewImage" style="display: none; max-width: 100%; max-height: 200px; border-radius: 12px; object-fit: cover;">
+        <video id="previewVideo" style="display: none; max-width: 100%; max-height: 200px; border-radius: 12px;" controls></video>
+        <audio id="previewAudio" style="display: none;" controls></audio>
+        <div id="previewFile" style="display: none;" class="preview-file-info">
+            <span class="file-icon-large">📎</span>
+            <div>
+                <div id="previewFileName" class="file-name"></div>
+                <div id="previewSize" class="file-size"></div>
+            </div>
+        </div>
+        <div id="previewLocation" style="display: none;" class="preview-location">
+            <div id="locationMap" style="height: 150px; background: #e2e8f0; border-radius: 12px;"></div>
+            <div id="locationAddress" class="location-address"></div>
+        </div>
+        <div id="previewContact" style="display: none;" class="preview-contact">
+            <div class="contact-card">
+                <div class="contact-avatar">👤</div>
+                <div>
+                    <div id="contactName" class="contact-name"></div>
+                    <div id="contactPhone" class="contact-phone"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="preview-actions">
+        <button id="sendAttachment" class="send-attachment-btn">📤 Отправить</button>
+        <button id="cancelAttachment" class="cancel-attachment-btn">❌ Отмена</button>
+    </div>
+</div>
+
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+<script>
+if (!window.chatInitialized) {
+    window.chatInitialized = true;
+    
+    let currentUserId = {{ current_user.id }};
+    let currentUsername = "{{ current_user.username }}";
+    let otherUserId = {{ other_user.id }};
+    let otherUsername = "{{ other_user.username }}";
+    let socket = null;
+    let myKeyPair = null;
+    let sharedSecret = null;
+    let chatAccessGranted = false;
+    let processedIds = new Set();
+    let isSending = false;
+    let currentReactionMessageId = null;
+    
+    let selectedFile = null;
+    let selectedFileData = null;
+    let selectedLocation = null;
+    let selectedContact = null;
+    
+    let stickers = [];
+    let stickerPanelVisible = false;
+    let typingTimer = null;
+
+    // ======== IndexedDB хранилище для ключей ========
+    class E2EEStorage {
+        constructor() {
+            this.dbName = 'e2eeKeys';
+            this.storeName = 'privateKeys';
+            this.db = null;
+        }
+
+        async openDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(this.dbName, 1);
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains(this.storeName)) {
+                        db.createObjectStore(this.storeName, { keyPath: 'id' });
+                    }
+                };
+                request.onsuccess = (event) => {
+                    this.db = event.target.result;
+                    resolve();
+                };
+                request.onerror = (event) => reject(event.target.error);
+            });
+        }
+
+        async savePrivateKey(userId, encryptedKey, iv, salt) {
+            await this.openDB();
+            return new Promise((resolve, reject) => {
+                const tx = this.db.transaction(this.storeName, 'readwrite');
+                const store = tx.objectStore(this.storeName);
+                store.put({ id: `user_${userId}`, encryptedKey, iv, salt });
+                tx.oncomplete = resolve;
+                tx.onerror = reject;
+            });
+        }
+
+        async getPrivateKey(userId) {
+            await this.openDB();
+            return new Promise((resolve, reject) => {
+                const tx = this.db.transaction(this.storeName, 'readonly');
+                const store = tx.objectStore(this.storeName);
+                const request = store.get(`user_${userId}`);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = reject;
+            });
+        }
+
+        async deletePrivateKey(userId) {
+            await this.openDB();
+            return new Promise((resolve, reject) => {
+                const tx = this.db.transaction(this.storeName, 'readwrite');
+                const store = tx.objectStore(this.storeName);
+                store.delete(`user_${userId}`);
+                tx.oncomplete = resolve;
+                tx.onerror = reject;
+            });
+        }
+    }
+
+    // ======== Криптографические утилиты для защиты ключа ========
+    async function deriveKeyFromPassword(password, salt) {
+        const enc = new TextEncoder();
+        const keyMaterial = await crypto.subtle.importKey(
+            "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
+        );
+        return crypto.subtle.deriveKey(
+            {
+                name: "PBKDF2",
+                salt: salt,
+                iterations: 100000,
+                hash: "SHA-256"
+            },
+            keyMaterial,
+            { name: "AES-GCM", length: 256 },
+            false,
+            ["encrypt", "decrypt"]
+        );
+    }
+
+    async function encryptPrivateKey(privateKeyRaw, password) {
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const key = await deriveKeyFromPassword(password, salt);
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const encrypted = await crypto.subtle.encrypt(
+            { name: "AES-GCM", iv: iv },
+            key,
+            privateKeyRaw
+        );
+        return {
+            encrypted: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
+            iv: btoa(String.fromCharCode(...iv)),
+            salt: btoa(String.fromCharCode(...salt))
+        };
+    }
+
+    async function decryptPrivateKey(encryptedData, ivBase64, saltBase64, password) {
+        const salt = Uint8Array.from(atob(saltBase64), c => c.charCodeAt(0));
+        const iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
+        const encrypted = Uint8Array.from(atob(encryptedData), c => c.charCodeAt(0));
+        const key = await deriveKeyFromPassword(password, salt);
+        const decrypted = await crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: iv },
+            key,
+            encrypted
+        );
+        return decrypted;
+    }
+
+    // ======== Вспомогательные функции ========
+    function getCsrfToken() {
+        let token = document.querySelector('meta[name="csrf-token"]');
+        if (token) return token.getAttribute('content');
+        token = document.querySelector('input[name="csrf_token"]');
+        if (token) return token.value;
+        return '';
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        let div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function scrollToBottom() {
+        let area = document.getElementById('chatMessagesArea');
+        if (area) setTimeout(() => area.scrollTop = area.scrollHeight, 100);
+    }
+
+    function showToast(message, type = 'info') {
+        let toast = document.createElement('div');
+        toast.className = `toast-notification ${type}`;
+        toast.innerHTML = `<span>${message}</span><button onclick="this.parentElement.remove()">×</button>`;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 4000);
+    }
+    
+    function formatFileSize(bytes) {
+        if (!bytes) return '0 B';
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function formatTime(utcDateString) {
+        if (!utcDateString) return '';
+        let date = new Date(utcDateString);
+        return date.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    }
+
+    function requestNotificationPermission() {
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+    }
+    
+    function playNotificationSound() {
+        try {
+            if (!window.AudioContext && !window.webkitAudioContext) return;
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            const context = new AudioCtx();
+            const oscillator = context.createOscillator();
+            const gain = context.createGain();
+            oscillator.connect(gain);
+            gain.connect(context.destination);
+            oscillator.frequency.value = 880;
+            gain.gain.value = 0.3;
+            oscillator.start();
+            gain.gain.exponentialRampToValueAtTime(0.00001, context.currentTime + 0.3);
+            oscillator.stop(context.currentTime + 0.3);
+            if (context.state === 'suspended') context.resume();
+        } catch(e) {}
+    }
+    
+    function showBrowserNotification(username, messageText) {
+        if (!('Notification' in window) || Notification.permission !== 'granted') return;
+        if (!document.hidden) return;
+        let title = `📨 Новое сообщение от ${username}`;
+        let body = messageText && messageText.length > 60 ? messageText.substring(0, 60) + '...' : (messageText || 'Новое сообщение');
+        let notification = new Notification(title, { body: body, icon: '/static/favicon.ico' });
+        notification.onclick = () => window.focus();
+    }
+
+    // ======== Генерация и экспорт ключей ECDH ========
+    async function generateKeyPair() {
+        return await crypto.subtle.generateKey(
+            { name: "ECDH", namedCurve: "P-256" },
+            true,
+            ["deriveKey", "deriveBits"]
+        );
+    }
+
+    async function exportPublicKey(keyPair) {
+        const exported = await crypto.subtle.exportKey("raw", keyPair.publicKey);
+        return btoa(String.fromCharCode(...new Uint8Array(exported)));
+    }
+
+    async function importPublicKey(base64Key) {
+        const keyData = Uint8Array.from(atob(base64Key), c => c.charCodeAt(0));
+        return await crypto.subtle.importKey(
+            "raw",
+            keyData,
+            { name: "ECDH", namedCurve: "P-256" },
+            true,
+            []
+        );
+    }
+
+    async function deriveSharedSecret(privateKey, publicKey) {
+        return await crypto.subtle.deriveKey(
+            { name: "ECDH", public: publicKey },
+            privateKey,
+            { name: "AES-GCM", length: 256 },
+            true,
+            ["encrypt", "decrypt"]
+        );
+    }
+
+    // ======== Шифрование сообщений (ИСПРАВЛЕНО) ========
+
+   function bufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 8192;
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, i + chunkSize);
+        binary += String.fromCharCode.apply(null, chunk);
+    }
+        return btoa(binary);
+    }
+
+    async function encryptMessage(message, secretKey) {
+    if (!secretKey) throw new Error('Нет ключа шифрования');
+    try {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(message);
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const encrypted = await crypto.subtle.encrypt(
+            { name: "AES-GCM", iv: iv },
+            secretKey,
+            data
+        );
+        return {
+            encrypted: bufferToBase64(encrypted),
+            iv: bufferToBase64(iv)
+        };
+    } catch(e) {
+        console.error('Encrypt error:', e);
+        throw e;
+        }
+    }
+    
+    
+    
+    async function decryptMessage(encryptedBase64, ivBase64, secretKey) {
+        if (!secretKey || !encryptedBase64 || !ivBase64) return encryptedBase64;
+        try {
+            const encrypted = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
+            const iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
+            const decrypted = await crypto.subtle.decrypt(
+                { name: "AES-GCM", iv: iv },
+                secretKey,
+                encrypted
+            );
+            const decoder = new TextDecoder();
+            const decryptedText = decoder.decode(decrypted);
+            try { return JSON.parse(decryptedText); } catch(e) { return decryptedText; }
+        } catch(e) {
+            console.error('Decrypt error:', e);
+            return '🔒 Не удалось расшифровать';
+        }
+    }
+
+    async function savePublicKeyToServer(publicKeyBase64) {
+        const response = await fetch('/api/e2ee/public_key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+            body: JSON.stringify({ public_key: publicKeyBase64 })
+        });
+        return response.ok;
+    }
+
+    async function loadOtherPublicKey() {
+        const response = await fetch(`/api/e2ee/public_key/${otherUserId}`);
+        const data = await response.json();
+        if (data.public_key) return await importPublicKey(data.public_key);
+        return null;
+    }
+
+    // ======== Инициализация E2EE (исправлено) ========
+    async function initE2EE() {
+        try {
+            const storage = new E2EEStorage();
+            let savedData = await storage.getPrivateKey(currentUserId);
+            let privateKeyRaw;
+            let needSave = false;
+
+            if (savedData) {
+                const password = prompt("Введите пароль для расшифровки ключей E2EE:");
+                if (!password) throw new Error("Пароль не введён");
+                privateKeyRaw = await decryptPrivateKey(
+                    savedData.encryptedKey, savedData.iv, savedData.salt, password
+                );
+                console.log('✅ Ключи расшифрованы из IndexedDB');
+            } else {
+                const newPair = await generateKeyPair();
+                const privateKeyBuf = await crypto.subtle.exportKey("pkcs8", newPair.privateKey);
+                const password = prompt("Придумайте пароль для защиты ваших ключей E2EE:");
+                if (!password) throw new Error("Пароль не введён");
+                const encrypted = await encryptPrivateKey(privateKeyBuf, password);
+                await storage.savePrivateKey(currentUserId, encrypted.encrypted, encrypted.iv, encrypted.salt);
+                privateKeyRaw = privateKeyBuf;
+                // Публичный ключ сохраним ниже
+                const publicKeyBase64 = await exportPublicKey(newPair);
+                localStorage.setItem(`e2ee_public_${currentUserId}`, publicKeyBase64);
+                await savePublicKeyToServer(publicKeyBase64);
+                myKeyPair = newPair;
+                needSave = false; // уже всё сохранено
+                console.log('✅ Сгенерированы и сохранены новые ключи');
+            }
+
+            if (!myKeyPair) {
+                // Если ключ был в IndexedDB, нужно импортировать приватную часть
+                myKeyPair = {
+                    privateKey: await crypto.subtle.importKey(
+                        "pkcs8",
+                        privateKeyRaw,
+                        { name: "ECDH", namedCurve: "P-256" },
+                        true,
+                        ["deriveKey"]
+                    )
+                };
+                // Загружаем публичный ключ из localStorage
+                const pubBase64 = localStorage.getItem(`e2ee_public_${currentUserId}`);
+                if (pubBase64) {
+                    myKeyPair.publicKey = await importPublicKey(pubBase64);
+                } else {
+                    // Если вдруг нет, генерируем новую пару
+                    const newPair = await generateKeyPair();
+                    const publicKeyBase64 = await exportPublicKey(newPair);
+                    localStorage.setItem(`e2ee_public_${currentUserId}`, publicKeyBase64);
+                    await savePublicKeyToServer(publicKeyBase64);
+                    myKeyPair = newPair;
+                    // Пересохраняем зашифрованный приватный ключ
+                    const newPrivateBuf = await crypto.subtle.exportKey("pkcs8", newPair.privateKey);
+                    const password = prompt("Введите пароль для нового ключа:");
+                    if (password) {
+                        const encrypted = await encryptPrivateKey(newPrivateBuf, password);
+                        await storage.savePrivateKey(currentUserId, encrypted.encrypted, encrypted.iv, encrypted.salt);
+                    }
+                }
+            }
+
+            const otherPublicKey = await loadOtherPublicKey();
+            if (!otherPublicKey) {
+                showToast('⚠️ У собеседника нет ключей', 'warning');
+                document.getElementById('encryptionBadge').innerHTML = '⚠️ Ожидание...';
+                return false;
+            }
+            
+            sharedSecret = await deriveSharedSecret(myKeyPair.privateKey, otherPublicKey);
+            chatAccessGranted = true;
+            document.getElementById('encryptionBadge').innerHTML = '🔒 E2EE активно';
+            document.getElementById('messageInput').disabled = false;
+            document.getElementById('sendButton').disabled = false;
+            showToast('🔐 Шифрование включено', 'success');
+            return true;
+        } catch(e) {
+            console.error('E2EE init error:', e);
+            return false;
+        }
+    }
+
+    async function loadStickers() {
+        try {
+            const response = await fetch('/api/stickers');
+            stickers = await response.json();
+            const stickerGrid = document.querySelector('.sticker-grid');
+            if (stickerGrid) {
+                stickerGrid.innerHTML = '';
+                stickers.forEach(sticker => {
+                    const stickerEl = document.createElement('div');
+                    stickerEl.className = 'sticker-item';
+                    stickerEl.innerHTML = `<span class="sticker-emoji">${sticker.code}</span>`;
+                    stickerEl.onclick = () => sendSticker(sticker.id, sticker.code);
+                    stickerGrid.appendChild(stickerEl);
+                });
+            }
+        } catch(e) {
+            console.error('Ошибка загрузки стикеров:', e);
+        }
+    }
+
+    async function sendSticker(stickerId, stickerCode) {
+        if (!chatAccessGranted || !sharedSecret) return;
+        stickerPanelVisible = false;
+        document.getElementById('stickerPanel').style.display = 'none';
+        
+        const stickerData = JSON.stringify({ type: 'sticker', code: stickerCode });
+        try {
+            const encrypted = await encryptMessage(stickerData, sharedSecret);
+            let tempId = 'temp_sticker_' + Date.now();
+            let container = document.getElementById('messagesList');
+            let tempDiv = document.createElement('div');
+            tempDiv.className = 'message sent temp-message';
+            tempDiv.setAttribute('data-temp-id', tempId);
+            tempDiv.innerHTML = `<div class="message-bubble sticker-message"><div class="sticker-emoji" style="font-size: 48px;">${stickerCode}</div><div class="message-time">${formatTime(new Date().toISOString())} <span class="message-status">⌛</span></div></div>`;
+            container.appendChild(tempDiv);
+            scrollToBottom();
+            
+            if (socket && socket.connected) {
+                socket.emit('send_message', {
+                    encrypted: encrypted.encrypted,
+                    iv: encrypted.iv,
+                    receiver_id: otherUserId,
+                    temp_id: tempId,
+                    is_sticker: true,
+                    is_attachment: false,
+                    sticker_id: stickerId,
+                    sticker_code: stickerCode
+                });
+            }
+        } catch(e) {
+            showToast('❌ Ошибка шифрования стикера', 'error');
+        }
+    }
+
+    function toggleStickerPanel() {
+        stickerPanelVisible = !stickerPanelVisible;
+        document.getElementById('stickerPanel').style.display = stickerPanelVisible ? 'flex' : 'none';
+    }
+
+    function markMessagesAsRead(messageIds) {
+        if (!socket || !socket.connected) return;
+        if (!messageIds || messageIds.length === 0) return;
+        messageIds.forEach(messageId => {
+            socket.emit('read_message', { message_id: messageId });
+        });
+    }
+
+    function markVisibleMessagesAsRead() {
+        if (!socket || !socket.connected) return;
+        let messagesArea = document.getElementById('chatMessagesArea');
+        if (!messagesArea) return;
+        let unreadMessages = document.querySelectorAll('.message.received:not(.read-marked)');
+        let idsToMark = [];
+        unreadMessages.forEach(msg => {
+            let rect = msg.getBoundingClientRect();
+            let areaRect = messagesArea.getBoundingClientRect();
+            if (rect.top >= areaRect.top - 50 && rect.bottom <= areaRect.bottom + 100) {
+                let id = msg.getAttribute('data-id');
+                if (id) {
+                    let messageId = parseInt(id.replace('msg_', ''));
+                    if (!isNaN(messageId)) {
+                        idsToMark.push(messageId);
+                        msg.classList.add('read-marked');
+                    }
+                }
+            }
+        });
+        if (idsToMark.length > 0) markMessagesAsRead(idsToMark);
+    }
+
+    function openReactionPicker(messageId, element) {
+        currentReactionMessageId = messageId;
+        let picker = document.getElementById('reactionPicker');
+        let rect = element.getBoundingClientRect();
+        picker.style.display = 'flex';
+        picker.style.position = 'fixed';
+        picker.style.bottom = (window.innerHeight - rect.top + 10) + 'px';
+        picker.style.left = (rect.left - 50) + 'px';
+    }
+
+    async function sendReaction(messageId, emoji) {
+        try {
+            let response = await fetch(`/api/message/${messageId}/react`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+                body: JSON.stringify({ emoji: emoji })
+            });
+            let data = await response.json();
+            if (data.success) updateMessageReactions(messageId, data.reactions);
+        } catch(e) { console.error('Reaction error:', e); }
+    }
+
+    function updateMessageReactions(messageId, reactions) {
+        let messageDiv = document.querySelector(`.message[data-id="msg_${messageId}"]`);
+        if (!messageDiv) return;
+        let reactionsContainer = messageDiv.querySelector('.message-reactions');
+        if (!reactionsContainer && reactions.length > 0) {
+            reactionsContainer = document.createElement('div');
+            reactionsContainer.className = 'message-reactions';
+            let bubble = messageDiv.querySelector('.message-bubble');
+            if (bubble) bubble.appendChild(reactionsContainer);
+        }
+        if (reactions.length === 0) {
+            if (reactionsContainer) reactionsContainer.remove();
+            return;
+        }
+        let reactionMap = new Map();
+        reactions.forEach(r => {
+            if (!reactionMap.has(r.emoji)) reactionMap.set(r.emoji, 0);
+            reactionMap.set(r.emoji, reactionMap.get(r.emoji) + 1);
+        });
+        reactionsContainer.innerHTML = '';
+        for (let [emoji, count] of reactionMap) {
+            reactionsContainer.innerHTML += `<span class="reaction-badge" data-message-id="msg_${messageId}" data-emoji="${emoji}">${emoji} ${count}</span>`;
+        }
+    }
+
+    function setupAttachments() {
+        const attachmentBtn = document.getElementById('attachmentBtn');
+        const attachmentMenu = document.getElementById('attachmentMenu');
+        const menuOverlay = document.querySelector('.attachment-menu-overlay');
+        
+        const galleryInput = document.getElementById('galleryInput');
+        const fileInputUniversal = document.getElementById('fileInputUniversal');
+        const documentInput = document.getElementById('documentInput');
+        const videoInput = document.getElementById('videoInput');
+        const audioInput = document.getElementById('audioInput');
+        const cameraInput = document.getElementById('cameraInput');
+        
+        const galleryOption = document.getElementById('galleryOption');
+        const fileOption = document.getElementById('fileOption');
+        const documentOption = document.getElementById('documentOption');
+        const videoOption = document.getElementById('videoOption');
+        const audioOption = document.getElementById('audioOption');
+        const cameraOption = document.getElementById('cameraOption');
+        const locationOption = document.getElementById('locationOption');
+        const contactOption = document.getElementById('contactOption');
+        
+        const preview = document.getElementById('attachmentPreview');
+        const previewImage = document.getElementById('previewImage');
+        const previewVideo = document.getElementById('previewVideo');
+        const previewAudio = document.getElementById('previewAudio');
+        const previewFile = document.getElementById('previewFile');
+        const previewFileName = document.getElementById('previewFileName');
+        const previewSize = document.getElementById('previewSize');
+        const previewLocation = document.getElementById('previewLocation');
+        const previewContact = document.getElementById('previewContact');
+        const closePreview = document.getElementById('closePreview');
+        const sendAttachmentBtn = document.getElementById('sendAttachment');
+        const cancelAttachmentBtn = document.getElementById('cancelAttachment');
+        
+        function openMenu() {
+            attachmentMenu.style.display = 'flex';
+            setTimeout(() => attachmentMenu.querySelector('.attachment-menu-content').classList.add('show'), 10);
+        }
+        function closeMenu() {
+            const content = attachmentMenu.querySelector('.attachment-menu-content');
+            if (content) content.classList.remove('show');
+            setTimeout(() => attachmentMenu.style.display = 'none', 300);
+        }
+        
+        attachmentBtn.addEventListener('click', openMenu);
+        if (menuOverlay) menuOverlay.addEventListener('click', closeMenu);
+        
+        galleryOption.addEventListener('click', () => { closeMenu(); galleryInput.value = ''; galleryInput.click(); });
+        fileOption.addEventListener('click', () => { closeMenu(); fileInputUniversal.value = ''; fileInputUniversal.click(); });
+        documentOption.addEventListener('click', () => { closeMenu(); documentInput.value = ''; documentInput.click(); });
+        videoOption.addEventListener('click', () => { closeMenu(); videoInput.value = ''; videoInput.click(); });
+        audioOption.addEventListener('click', () => { closeMenu(); audioInput.value = ''; audioInput.click(); });
+        cameraOption.addEventListener('click', () => { closeMenu(); cameraInput.value = ''; cameraInput.click(); });
+        
+        locationOption.addEventListener('click', async () => {
+            closeMenu();
+            if (!navigator.geolocation) { showToast('❌ Геолокация не поддерживается', 'error'); return; }
+            showToast('📍 Получение местоположения...', 'info');
+            navigator.geolocation.getCurrentPosition(async (position) => {
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+                selectedLocation = { lat, lng };
+                try {
+                    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
+                    const data = await response.json();
+                    const address = data.display_name || `${lat}, ${lng}`;
+                    document.getElementById('locationAddress').textContent = address;
+                } catch(e) { document.getElementById('locationAddress').textContent = `${lat}, ${lng}`; }
+                document.getElementById('locationMap').innerHTML = `<iframe width="100%" height="100%" frameborder="0" style="border:0; border-radius:12px;" src="https://www.openstreetmap.org/export/embed.html?bbox=${lng-0.01},${lat-0.01},${lng+0.01},${lat+0.01}&layer=mapnik&marker=${lat},${lng}"></iframe>`;
+                previewLocation.style.display = 'block';
+                previewImage.style.display = 'none';
+                previewVideo.style.display = 'none';
+                previewAudio.style.display = 'none';
+                previewFile.style.display = 'none';
+                previewContact.style.display = 'none';
+                preview.style.display = 'block';
+            }, () => showToast('❌ Не удалось получить местоположение', 'error'));
+        });
+        
+        contactOption.addEventListener('click', async () => {
+            closeMenu();
+            if (navigator.contacts && navigator.contacts.select) {
+                try {
+                    const contacts = await navigator.contacts.select(['name', 'tel'], { multiple: false });
+                    if (contacts && contacts.length > 0) {
+                        const contact = contacts[0];
+                        selectedContact = {
+                            name: contact.name?.[0] || 'Без имени',
+                            phone: contact.tel?.[0] || 'Нет телефона'
+                        };
+                        document.getElementById('contactName').textContent = selectedContact.name;
+                        document.getElementById('contactPhone').textContent = selectedContact.phone;
+                        previewContact.style.display = 'block';
+                        previewImage.style.display = 'none';
+                        previewVideo.style.display = 'none';
+                        previewAudio.style.display = 'none';
+                        previewFile.style.display = 'none';
+                        previewLocation.style.display = 'none';
+                        preview.style.display = 'block';
+                        return;
+                    }
+                } catch(e) {}
+            }
+            const name = prompt('Введите имя контакта:');
+            if (name) {
+                const phone = prompt('Введите номер телефона:');
+                selectedContact = { name: name, phone: phone || 'Не указан' };
+                document.getElementById('contactName').textContent = selectedContact.name;
+                document.getElementById('contactPhone').textContent = selectedContact.phone;
+                previewContact.style.display = 'block';
+                previewImage.style.display = 'none';
+                previewVideo.style.display = 'none';
+                previewAudio.style.display = 'none';
+                previewFile.style.display = 'none';
+                previewLocation.style.display = 'none';
+                preview.style.display = 'block';
+            }
+        });
+        
+        function handleFileSelect(file, type) {
+            if (!file) return;
+            if (file.size > 10 * 1024 * 1024) {
+                showToast('❌ Файл больше 10MB', 'error');
+                return;
+            }
+            selectedFile = file;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                selectedFileData = event.target.result;
+                previewSize.textContent = formatFileSize(file.size);
+                previewImage.style.display = 'none';
+                previewVideo.style.display = 'none';
+                previewAudio.style.display = 'none';
+                previewFile.style.display = 'none';
+                previewLocation.style.display = 'none';
+                previewContact.style.display = 'none';
+                if (file.type.startsWith('image/')) {
+                    previewImage.src = selectedFileData;
+                    previewImage.style.display = 'block';
+                } else if (file.type.startsWith('video/')) {
+                    previewVideo.src = selectedFileData;
+                    previewVideo.style.display = 'block';
+                } else if (file.type.startsWith('audio/')) {
+                    previewAudio.src = selectedFileData;
+                    previewAudio.style.display = 'block';
+                } else {
+                    previewFileName.textContent = file.name;
+                    previewFile.style.display = 'flex';
+                }
+                preview.style.display = 'block';
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        galleryInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFileSelect(e.target.files[0], 'gallery'); });
+        fileInputUniversal.addEventListener('change', (e) => { if (e.target.files[0]) handleFileSelect(e.target.files[0], 'file'); });
+        documentInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFileSelect(e.target.files[0], 'document'); });
+        videoInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFileSelect(e.target.files[0], 'video'); });
+        audioInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFileSelect(e.target.files[0], 'audio'); });
+        cameraInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFileSelect(e.target.files[0], 'camera'); });
+        
+        closePreview.addEventListener('click', () => { preview.style.display = 'none'; clearAttachment(); });
+        cancelAttachmentBtn.addEventListener('click', () => { preview.style.display = 'none'; clearAttachment(); });
+        
+        function clearAttachment() {
+            selectedFile = null;
+            selectedFileData = null;
+            selectedLocation = null;
+            selectedContact = null;
+            galleryInput.value = '';
+            fileInputUniversal.value = '';
+            documentInput.value = '';
+            videoInput.value = '';
+            audioInput.value = '';
+            cameraInput.value = '';
+        }
+        
+        sendAttachmentBtn.addEventListener('click', async () => {
+            if (!chatAccessGranted || !sharedSecret) {
+                showToast('❌ Шифрование не готово', 'error');
+                return;
+            }
+            let attachmentData = null;
+            if (selectedFile && selectedFileData) {
+                attachmentData = JSON.stringify({
+                    type: 'attachment',
+                    name: selectedFile.name,
+                    mime: selectedFile.type,
+                    size: selectedFile.size,
+                    data: selectedFileData
+                });
+            } else if (selectedLocation) {
+                attachmentData = JSON.stringify({
+                    type: 'location',
+                    lat: selectedLocation.lat,
+                    lng: selectedLocation.lng,
+                    address: document.getElementById('locationAddress').textContent
+                });
+            } else if (selectedContact) {
+                attachmentData = JSON.stringify({
+                    type: 'contact',
+                    name: selectedContact.name,
+                    phone: selectedContact.phone
+                });
+            }
+            if (!attachmentData) {
+                showToast('❌ Нет данных для отправки', 'error');
+                return;
+            }
+
+            try {
+                const encrypted = await encryptMessage(attachmentData, sharedSecret);
+                preview.style.display = 'none';
+                
+                let tempId = 'temp_attachment_' + Date.now();
+                let container = document.getElementById('messagesList');
+                let tempDiv = document.createElement('div');
+                tempDiv.className = 'message sent temp-message';
+                tempDiv.setAttribute('data-temp-id', tempId);
+                let attachmentHtml = '';
+                if (selectedFile && selectedFile.type && selectedFile.type.startsWith('image/')) {
+                    attachmentHtml = `<div class="message-attachment"><img src="${selectedFileData}" class="attachment-image" style="max-width: 200px; max-height: 150px; border-radius: 12px; cursor: pointer;"></div>`;
+                } else if (selectedLocation) {
+                    attachmentHtml = `<div class="message-attachment">📍 <strong>Локация</strong><br><small>${document.getElementById('locationAddress').textContent.substring(0, 50)}</small></div>`;
+                } else if (selectedContact) {
+                    attachmentHtml = `<div class="message-attachment">👤 <strong>${escapeHtml(selectedContact.name)}</strong><br><small>📞 ${escapeHtml(selectedContact.phone)}</small></div>`;
+                } else if (selectedFile) {
+                    attachmentHtml = `<div class="message-attachment"><div class="attachment-file"><span class="file-icon">📎</span><span>${escapeHtml(selectedFile.name)}</span><span class="file-size">${formatFileSize(selectedFile.size)}</span></div></div>`;
+                }
+                tempDiv.innerHTML = `<div class="message-bubble"><div class="message-text">${attachmentHtml}</div><div class="message-time">${formatTime(new Date().toISOString())} <span class="message-status">⌛</span></div></div>`;
+                container.appendChild(tempDiv);
+                scrollToBottom();
+                
+                if (socket && socket.connected) {
+                    socket.emit('send_message', {
+                        encrypted: encrypted.encrypted,
+                        iv: encrypted.iv,
+                        receiver_id: otherUserId,
+                        temp_id: tempId,
+                        is_attachment: true,
+                        is_sticker: false,
+                        attachment_name: selectedFile?.name || null,
+                        attachment_size: selectedFile?.size || null,
+                        attachment_type: selectedFile?.type || null
+                    });
+                }
+            } catch(e) {
+                showToast('❌ Ошибка шифрования вложения', 'error');
+            }
+            clearAttachment();
+        });
+    }
+
+    function addMessage(msg, isMine) {
+        let container = document.getElementById('messagesList');
+        if (!container) return;
+        
+        let loader = container.querySelector('.loading-messages');
+        if (loader) loader.remove();
+        
+        if (msg.id && processedIds.has(msg.id)) return;
+        if (msg.id) processedIds.add(msg.id);
+        
+        if (msg.temp_id) {
+            let tempMsg = container.querySelector(`.temp-message[data-temp-id="${msg.temp_id}"]`);
+            if (tempMsg) tempMsg.remove();
+        }
+        
+        let messageDiv = document.createElement('div');
+        messageDiv.className = `message ${isMine ? 'sent' : 'received'}`;
+        if (msg.id) messageDiv.setAttribute('data-id', `msg_${msg.id}`);
+        
+        let time = formatTime(msg.created_at);
+        let statusHtml = '';
+        if (isMine) {
+            statusHtml = msg.is_read ? '<span class="message-status" title="Прочитано">✓✓</span>' : '<span class="message-status" title="Отправлено">✓</span>';
+        }
+        
+        let reactionsHtml = '';
+        if (msg.reactions && msg.reactions.length > 0) {
+            let reactionMap = new Map();
+            msg.reactions.forEach(r => {
+                if (!reactionMap.has(r.emoji)) reactionMap.set(r.emoji, 0);
+                reactionMap.set(r.emoji, reactionMap.get(r.emoji) + 1);
+            });
+            reactionsHtml = '<div class="message-reactions">';
+            for (let [emoji, count] of reactionMap) {
+                reactionsHtml += `<span class="reaction-badge" data-message-id="msg_${msg.id}" data-emoji="${emoji}">${emoji} ${count}</span>`;
+            }
+            reactionsHtml += '</div>';
+        }
+        
+        let avatarHtml = `<div class="message-avatar" style="background-image: url('/avatar/${msg.sender_id}'); background-size: cover; background-position: center;">${msg.sender_username ? msg.sender_username.charAt(0).toUpperCase() : '?'}</div>`;
+        let flexDirection = isMine ? 'row-reverse' : 'row';
+        
+        let isSticker = msg.is_sticker;
+        let isAttachment = msg.is_attachment;
+        let displayText = msg.text || '';
+        let stickerCode = msg.sticker_code || '';
+        let attachmentData = msg.attachment_data;
+        let attachmentMime = msg.attachment_mime || '';
+        let attachmentName = msg.attachment_name || 'Файл';
+        let attachmentSize = msg.attachment_size || 0;
+        
+        let contentHtml = '';
+        
+        if (isSticker) {
+            contentHtml = `<div class="message-bubble sticker-message"><div class="sticker-emoji" style="font-size: 48px;">${escapeHtml(stickerCode || '😊')}</div>${reactionsHtml}<div class="message-time">${time} ${statusHtml}</div></div>`;
+        } else if (isAttachment && attachmentData) {
+            let attachmentHtml = '';
+            if (attachmentMime && attachmentMime.startsWith('image/')) {
+                attachmentHtml = `<div class="message-attachment"><img src="${attachmentData}" class="attachment-image" onclick="window.open('${attachmentData}', '_blank')"></div>`;
+            } else {
+                attachmentHtml = `<div class="message-attachment"><a href="${attachmentData}" download="${attachmentName}" class="attachment-file"><span class="file-icon">📎</span><span class="file-name">${escapeHtml(attachmentName)}</span><span class="file-size">${formatFileSize(attachmentSize)}</span></a></div>`;
+            }
+            contentHtml = `<div class="message-bubble">${!isMine ? `<div class="message-sender">${escapeHtml(msg.sender_username || otherUsername)}</div>` : ''}${attachmentHtml}${reactionsHtml}<div class="message-time">${time} ${statusHtml}</div></div>`;
+        } else {
+            contentHtml = `<div class="message-bubble">${!isMine ? `<div class="message-sender">${escapeHtml(msg.sender_username || otherUsername)}</div>` : ''}<div class="message-text">${escapeHtml(displayText)}</div>${reactionsHtml}<div class="message-time">${time} ${statusHtml}</div></div>`;
+        }
+        
+        messageDiv.innerHTML = `<div style="display: flex; gap: 10px; align-items: flex-start; flex-direction: ${flexDirection};">${avatarHtml}${contentHtml}<button class="react-btn" data-message-id="msg_${msg.id}" title="Реакция">😊</button></div>`;
+        container.appendChild(messageDiv);
+        scrollToBottom();
+        
+        if (!isMine && !msg.is_read) setTimeout(() => markVisibleMessagesAsRead(), 500);
+    }
+
+    async function sendMessage() {
+        if (isSending || !chatAccessGranted || !sharedSecret) return;
+        
+        let input = document.getElementById('messageInput');
+        let text = input.value.trim();
+        if (!text) return;
+        
+        isSending = true;
+        input.value = '';
+        input.style.height = 'auto';
+        
+        try {
+            const encrypted = await encryptMessage(text, sharedSecret);
+            
+            let tempId = 'temp_' + Date.now();
+            let container = document.getElementById('messagesList');
+            let tempDiv = document.createElement('div');
+            tempDiv.className = 'message sent temp-message';
+            tempDiv.setAttribute('data-temp-id', tempId);
+            tempDiv.innerHTML = `<div class="message-bubble"><div class="message-text">🔒 Отправка...</div><div class="message-time">${formatTime(new Date().toISOString())} <span class="message-status">⌛</span></div></div>`;
+            container.appendChild(tempDiv);
+            scrollToBottom();
+            
+            if (socket && socket.connected) {
+                socket.emit('send_message', {
+                    encrypted: encrypted.encrypted,
+                    iv: encrypted.iv,
+                    receiver_id: otherUserId,
+                    temp_id: tempId,
+                    is_sticker: false,
+                    is_attachment: false
+                });
+            }
+        } catch(e) {
+            showToast('❌ Ошибка шифрования', 'error');
+        }
+        
+        setTimeout(() => { isSending = false; }, 300);
+    }
+
+    async function loadHistory() {
+        if (!chatAccessGranted || !sharedSecret) return;
+        
+        try {
+            let res = await fetch(`/api/e2ee/messages/${otherUserId}`);
+            let data = await res.json();
+            
+            let container = document.getElementById('messagesList');
+            if (!container) return;
+            container.innerHTML = '';
+            processedIds.clear();
+            
+            if (data.messages && data.messages.length > 0) {
+                for (let msg of data.messages) {
+                    let reactions = [];
+                    let displayText = '';
+                    let isSticker = false;
+                    let isAttachment = false;
+                    let attachmentData = null;
+                    let attachmentMime = '';
+                    let attachmentName = '';
+                    let attachmentSize = 0;
+                    let stickerCode = '';
+                    
+                    try {
+                        let reactRes = await fetch(`/api/message/${msg.id}/reactions`);
+                        let reactData = await reactRes.json();
+                        reactions = reactData.reactions || [];
+                    } catch(e) {}
+                    
+                    try {
+                        let decrypted = await decryptMessage(msg.encrypted, msg.nonce, sharedSecret);
+                        
+                        if (typeof decrypted === 'object') {
+                            if (decrypted.type === 'sticker') {
+                                isSticker = true;
+                                stickerCode = decrypted.code;
+                                displayText = stickerCode;
+                            } else if (decrypted.type === 'attachment') {
+                                isAttachment = true;
+                                attachmentMime = decrypted.mime;
+                                attachmentName = decrypted.name;
+                                attachmentSize = decrypted.size;
+                                attachmentData = decrypted.data;
+                                displayText = '';
+                            } else if (decrypted.type === 'location') {
+                                isAttachment = true;
+                                displayText = `📍 Локация: ${decrypted.address || `${decrypted.lat}, ${decrypted.lng}`}`;
+                            } else if (decrypted.type === 'contact') {
+                                isAttachment = true;
+                                displayText = `👤 Контакт: ${decrypted.name} | 📞 ${decrypted.phone}`;
+                            } else {
+                                displayText = JSON.stringify(decrypted);
+                            }
+                        } else {
+                            displayText = decrypted;
+                        }
+                        
+                        await addMessage({
+                            id: msg.id,
+                            text: displayText,
+                            sticker_code: stickerCode,
+                            created_at: msg.created_at,
+                            sender_id: msg.sender_id,
+                            sender_username: msg.sender_id === currentUserId ? currentUsername : otherUsername,
+                            is_read: msg.is_read || false,
+                            reactions: reactions,
+                            is_sticker: isSticker,
+                            is_attachment: isAttachment,
+                            attachment_data: attachmentData,
+                            attachment_mime: attachmentMime,
+                            attachment_name: attachmentName,
+                            attachment_size: attachmentSize
+                        }, msg.sender_id === currentUserId);
+                    } catch(e) {
+                        await addMessage({
+                            id: msg.id,
+                            text: '🔒 Не удалось расшифровать',
+                            created_at: msg.created_at,
+                            sender_id: msg.sender_id,
+                            is_read: msg.is_read || false,
+                            reactions: reactions
+                        }, msg.sender_id === currentUserId);
+                    }
+                }
+                
+                let unreadIds = data.messages.filter(m => !m.is_read && m.sender_id !== currentUserId).map(m => m.id);
+                if (unreadIds.length > 0) markMessagesAsRead(unreadIds);
+            } else {
+                container.innerHTML = '<div class="empty-chat">💬 Напишите первое сообщение!</div>';
+            }
+        } catch(e) {
+            console.error('Load error:', e);
+        }
+    }
+
+    function initSocket() {
+        socket = io({ transports: ['websocket', 'polling'] });
+        
+        socket.on('connect', () => {
+            console.log('✅ WebSocket connected');
+            socket.emit('join_chat', { other_user_id: otherUserId });
+        });
+        
+        socket.on('new_message', async (data) => {
+            if (!chatAccessGranted || !sharedSecret) return;
+            
+            try {
+                let decrypted = await decryptMessage(data.encrypted, data.iv, sharedSecret);
+                let isSticker = data.is_sticker;
+                let isAttachment = data.is_attachment;
+                let displayText = '';
+                let stickerCode = '';
+                let attachmentData = null;
+                let attachmentMime = '';
+                let attachmentName = '';
+                let attachmentSize = 0;
+                
+                if (typeof decrypted === 'object') {
+                    if (decrypted.type === 'sticker') {
+                        isSticker = true;
+                        stickerCode = decrypted.code;
+                        displayText = stickerCode;
+                    } else if (decrypted.type === 'attachment') {
+                        isAttachment = true;
+                        attachmentMime = decrypted.mime;
+                        attachmentName = decrypted.name;
+                        attachmentSize = decrypted.size;
+                        attachmentData = decrypted.data;
+                        displayText = '';
+                    } else if (decrypted.type === 'location') {
+                        isAttachment = true;
+                        displayText = `📍 Локация: ${decrypted.address || `${decrypted.lat}, ${decrypted.lng}`}`;
+                    } else if (decrypted.type === 'contact') {
+                        isAttachment = true;
+                        displayText = `👤 Контакт: ${decrypted.name} | 📞 ${decrypted.phone}`;
+                    }
+                } else {
+                    displayText = decrypted;
+                }
+                
+                await addMessage({
+                    id: data.id,
+                    text: displayText,
+                    sticker_code: stickerCode,
+                    created_at: data.created_at,
+                    sender_id: data.sender_id,
+                    sender_username: data.sender_username,
+                    is_read: false,
+                    reactions: [],
+                    is_sticker: isSticker,
+                    is_attachment: isAttachment,
+                    attachment_data: attachmentData,
+                    attachment_mime: attachmentMime,
+                    attachment_name: attachmentName,
+                    attachment_size: attachmentSize,
+                    temp_id: data.temp_id
+                }, data.sender_id === currentUserId);
+                
+                if (data.sender_id !== currentUserId) {
+                    if (!document.hidden) {
+                        setTimeout(() => markVisibleMessagesAsRead(), 500);
+                    } else {
+                        playNotificationSound();
+                        showBrowserNotification(data.sender_username, displayText || '📎 Вложение');
+                    }
+                }
+            } catch(e) {
+                console.error('Decrypt error:', e);
+            }
+        });
+        
+        socket.on('message_read', (data) => {
+            let msgElement = document.querySelector(`.message[data-id="msg_${data.message_id}"]`);
+            if (msgElement) {
+                let statusSpan = msgElement.querySelector('.message-status');
+                if (statusSpan && statusSpan.innerHTML === '✓') {
+                    statusSpan.innerHTML = '✓✓';
+                    statusSpan.title = 'Прочитано';
+                }
+            }
+        });
+        
+        socket.on('message_reaction', (data) => {
+            updateMessageReactions(data.message_id, data.reactions);
+        });
+        
+        socket.on('user_typing', (data) => {
+            if (data.sender_id === otherUserId) {
+                let indicator = document.getElementById('typingIndicator');
+                let usernameSpan = document.getElementById('typingUsername');
+                if (indicator && usernameSpan) {
+                    usernameSpan.textContent = otherUsername;
+                    indicator.style.display = 'flex';
+                    setTimeout(() => indicator.style.display = 'none', 3000);
+                }
+            }
+        });
+        
+        socket.on('connect_error', (e) => console.error('Socket error:', e));
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        console.log('🚀 Запуск чата...');
+        
+        requestNotificationPermission();
+        
+        document.getElementById('messageInput').disabled = true;
+        document.getElementById('sendButton').disabled = true;
+        
+        const success = await initE2EE();
+        
+        if (success) {
+            initSocket();
+            await loadHistory();
+        }
+        
+        loadStickers();
+        setupAttachments();
+        
+        let sendBtn = document.getElementById('sendButton');
+        let newSendBtn = sendBtn.cloneNode(true);
+        sendBtn.parentNode.replaceChild(newSendBtn, sendBtn);
+        newSendBtn.onclick = sendMessage;
+        
+        let input = document.getElementById('messageInput');
+        
+        input.onkeydown = (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        };
+        
+        input.oninput = function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 100) + 'px';
+            if (typingTimer) clearTimeout(typingTimer);
+            if (socket && socket.connected) {
+                socket.emit('typing', { receiver_id: otherUserId });
+            }
+            typingTimer = setTimeout(() => {}, 2000);
+        };
+        
+        document.getElementById('stickerBtn').onclick = toggleStickerPanel;
+        
+        document.getElementById('messagesList').addEventListener('click', function(e) {
+            if (e.target.classList && e.target.classList.contains('react-btn')) {
+                let messageId = e.target.getAttribute('data-message-id');
+                if (messageId) openReactionPicker(messageId.replace('msg_', ''), e.target);
+                e.stopPropagation();
+            }
+            if (e.target.classList && e.target.classList.contains('reaction-badge')) {
+                let messageId = e.target.getAttribute('data-message-id');
+                let emoji = e.target.getAttribute('data-emoji');
+                if (messageId && emoji) sendReaction(messageId.replace('msg_', ''), emoji);
+                e.stopPropagation();
+            }
+        });
+        
+        document.querySelectorAll('.reaction-emoji').forEach(emojiEl => {
+            emojiEl.addEventListener('click', function() {
+                let emoji = this.getAttribute('data-emoji');
+                if (currentReactionMessageId && emoji) {
+                    sendReaction(currentReactionMessageId, emoji);
+                    document.getElementById('reactionPicker').style.display = 'none';
+                    currentReactionMessageId = null;
+                }
+            });
+        });
+        
+        document.addEventListener('click', function(e) {
+            if (stickerPanelVisible && !e.target.closest('.sticker-panel') && e.target.id !== 'stickerBtn') {
+                stickerPanelVisible = false;
+                document.getElementById('stickerPanel').style.display = 'none';
+            }
+            if (!e.target.closest('.reaction-picker') && !e.target.classList.contains('react-btn')) {
+                document.getElementById('reactionPicker').style.display = 'none';
+                currentReactionMessageId = null;
+            }
+        });
+        
+        let scrollTimeout;
+        const messagesArea = document.getElementById('chatMessagesArea');
+        if (messagesArea) {
+            messagesArea.addEventListener('scroll', () => {
+                if (scrollTimeout) clearTimeout(scrollTimeout);
+                scrollTimeout = setTimeout(() => markVisibleMessagesAsRead(), 300);
+            });
+        }
+        
+        window.addEventListener('focus', () => {
+            markVisibleMessagesAsRead();
+        });
+        
+        document.getElementById('verifyKeyBtn').onclick = () => {
+            alert('🔐 Сквозное шифрование активно\n\nСообщения шифруются в вашем браузере и расшифровываются только у собеседника.\nСервер никогда не видит ваши сообщения.');
+        };
+    });
+}
+</script>
+{% endblock %}

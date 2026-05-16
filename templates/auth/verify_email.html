@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Подтверждение email - Messenger{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="card" style="max-width: 500px; margin: 0 auto; text-align: center;">
+        <div style="font-size: 64px; margin-bottom: 20px;">📧</div>
+        
+        <h2 style="margin-bottom: 20px;">Подтверждение email</h2>
+        
+        <p style="margin-bottom: 20px; color: var(--text-secondary);">
+            Мы отправили письмо с подтверждением на адрес <strong>{{ email }}</strong>
+        </p>
+        
+        <div class="alert alert-info" style="background: #e3f2fd; padding: 15px; border-radius: 10px; margin-bottom: 20px; text-align: left;">
+            <p style="margin: 0;">📌 Инструкция:</p>
+            <ol style="margin: 10px 0 0 20px;">
+                <li>Перейдите в вашу почту</li>
+                <li>Откройте письмо от Messenger</li>
+                <li>Нажмите на кнопку подтверждения</li>
+            </ol>
+        </div>
+        
+        <form action="{{ url_for('resend_verification') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn" style="width: 100%; margin-bottom: 15px;">
+                🔄 Отправить письмо повторно
+            </button>
+        </form>
+        
+        <a href="{{ url_for('logout') }}" class="btn btn-outline" style="width: 100%;">
+            🚪 Выйти
+        </a>
+        
+        <p style="margin-top: 20px; font-size: 13px; color: var(--text-light);">
+            Не пришло письмо? Проверьте папку "Спам" или нажмите "Отправить повторно"
+        </p>
+    </div>
+</div>
+{% endblock %}

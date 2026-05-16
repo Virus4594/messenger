@@ -1,0 +1,618 @@
+{% extends "base.html" %}
+
+{% block title %}Мои друзья - Messenger{% endblock %}
+
+{% block content %}
+<div class="friends-page">
+    <div class="friends-header">
+        <h1 class="friends-title">👥 Друзья</h1>
+        <p class="friends-subtitle">Общайтесь с друзьями и находите новых</p>
+    </div>
+    
+    <!-- Вкладки -->
+    <div class="friends-tabs">
+        <button class="friend-tab active" data-tab="friends">
+            <span class="tab-icon">👫</span>
+            <span class="tab-label">Друзья</span>
+            {% if friends %}
+                <span class="tab-badge">{{ friends|length }}</span>
+            {% endif %}
+        </button>
+        <button class="friend-tab" data-tab="incoming">
+            <span class="tab-icon">📥</span>
+            <span class="tab-label">Запросы</span>
+            {% if incoming_requests %}
+                <span class="tab-badge warning">{{ incoming_requests|length }}</span>
+            {% endif %}
+        </button>
+        <button class="friend-tab" data-tab="sent">
+            <span class="tab-icon">📤</span>
+            <span class="tab-label">Отправленные</span>
+            {% if outgoing_requests %}
+                <span class="tab-badge">{{ outgoing_requests|length }}</span>
+            {% endif %}
+        </button>
+    </div>
+    
+    <!-- Друзья -->
+    <div id="friends-tab" class="friends-tab-content active">
+        {% if friends %}
+            <div class="friends-grid">
+                {% for friend in friends %}
+                <div class="friend-card">
+                    <div class="friend-card-inner">
+                        <div class="friend-status-dot {% if friend.is_online %}online{% else %}offline{% endif %}"></div>
+                        <div class="friend-avatar-wrapper">
+                            <div class="friend-avatar" style="background: linear-gradient(135deg, {{ friend.color|default('#667eea') }}, {{ friend.color2|default('#764ba2') }})">
+                                {{ friend.username[:1].upper() }}
+                            </div>
+                        </div>
+                        <h3 class="friend-name">{{ friend.username }}</h3>
+                        <div class="friend-status">
+                            {% if friend.is_online %}
+                                <span class="online-status">● Онлайн</span>
+                            {% else %}
+                                <span class="offline-status">● Был(а) недавно</span>
+                            {% endif %}
+                        </div>
+                        <div class="friend-actions">
+                            <a href="{{ url_for('chat', username=friend.username) }}" class="friend-btn primary">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                                </svg>
+                                Сообщение
+                            </a>
+                            <a href="{{ url_for('user_profile', username=friend.username) }}" class="friend-btn secondary">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                                    <circle cx="12" cy="7" r="4"/>
+                                </svg>
+                                Профиль
+                            </a>
+                        </div>
+                        <form action="{{ url_for('remove_friend', friend_id=friend.id) }}" method="POST" class="remove-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="friend-btn danger" data-friend-name="{{ friend.username }}">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="3 6 5 6 21 6"/>
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                </svg>
+                                Удалить
+                            </button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="empty-friends">
+                <div class="empty-icon">👻</div>
+                <h3>Пока нет друзей</h3>
+                <p>Найдите интересных людей и добавьте их в друзья!</p>
+                <a href="{{ url_for('search') }}" class="empty-btn">🔍 Найти друзей</a>
+            </div>
+        {% endif %}
+    </div>
+    
+    <!-- Входящие запросы -->
+    <div id="incoming-tab" class="friends-tab-content">
+        {% if incoming_requests %}
+            <div class="requests-list">
+                {% for user in incoming_requests %}
+                <div class="request-card">
+                    <div class="request-avatar">
+                        {{ user.username[:1].upper() }}
+                    </div>
+                    <div class="request-info">
+                        <h4>{{ user.username }}</h4>
+                        <p>Хочет добавить вас в друзья</p>
+                    </div>
+                    <div class="request-actions">
+                        <form action="{{ url_for('accept_friend', friend_id=user.id) }}" method="POST" class="accept-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="request-btn accept">Принять</button>
+                        </form>
+                        <form action="{{ url_for('reject_friend', friend_id=user.id) }}" method="POST" class="reject-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="request-btn reject">Отклонить</button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="empty-friends">
+                <div class="empty-icon">📭</div>
+                <h3>Нет входящих запросов</h3>
+                <p>Когда кто-то отправит вам запрос, он появится здесь</p>
+            </div>
+        {% endif %}
+    </div>
+    
+    <!-- Отправленные запросы -->
+    <div id="sent-tab" class="friends-tab-content">
+        {% if outgoing_requests %}
+            <div class="requests-list">
+                {% for user in outgoing_requests %}
+                <div class="request-card sent">
+                    <div class="request-avatar pending">
+                        {{ user.username[:1].upper() }}
+                    </div>
+                    <div class="request-info">
+                        <h4>{{ user.username }}</h4>
+                        <p>Ожидает подтверждения</p>
+                    </div>
+                    <div class="request-status-badge">
+                        <span class="pending-badge">⏳ Ожидание</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="empty-friends">
+                <div class="empty-icon">📤</div>
+                <h3>Нет отправленных запросов</h3>
+                <p>Вы ещё никому не отправили запрос в друзья</p>
+                <a href="{{ url_for('search') }}" class="empty-btn">🔍 Найти друзей</a>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+/* Стили специально для страницы друзей */
+.friends-page {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.friends-header {
+    text-align: center;
+    margin-bottom: 40px;
+}
+
+.friends-title {
+    font-size: 32px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    margin-bottom: 8px;
+}
+
+.friends-subtitle {
+    color: #666;
+    font-size: 14px;
+}
+
+/* Вкладки */
+.friends-tabs {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 32px;
+    flex-wrap: wrap;
+}
+
+.friend-tab {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    background: white;
+    border: none;
+    border-radius: 40px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.friend-tab:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.friend-tab.active {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.tab-icon {
+    font-size: 18px;
+}
+
+.tab-badge {
+    background: rgba(0,0,0,0.1);
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 12px;
+}
+
+.friend-tab.active .tab-badge {
+    background: rgba(255,255,255,0.2);
+}
+
+.tab-badge.warning {
+    background: #ff4757;
+    color: white;
+}
+
+/* Сетка друзей */
+.friends-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 24px;
+}
+
+.friend-card {
+    background: white;
+    border-radius: 20px;
+    overflow: hidden;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+}
+
+.friend-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+}
+
+.friend-card-inner {
+    padding: 24px;
+    position: relative;
+    text-align: center;
+}
+
+.friend-status-dot {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+}
+
+.friend-status-dot.online {
+    background: #10b981;
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+    animation: pulse 2s infinite;
+}
+
+.friend-status-dot.offline {
+    background: #94a3b8;
+}
+
+@keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+    70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+.friend-avatar-wrapper {
+    margin-bottom: 16px;
+}
+
+.friend-avatar {
+    width: 90px;
+    height: 90px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 36px;
+    font-weight: bold;
+    color: white;
+    margin: 0 auto;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+}
+
+.friend-name {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #1e293b;
+}
+
+.friend-status {
+    margin-bottom: 20px;
+}
+
+.online-status {
+    color: #10b981;
+    font-size: 13px;
+}
+
+.offline-status {
+    color: #94a3b8;
+    font-size: 13px;
+}
+
+.friend-actions {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.friend-btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    transition: all 0.2s;
+    border: none;
+    cursor: pointer;
+}
+
+.friend-btn.primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.friend-btn.primary:hover {
+    transform: scale(1.02);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.friend-btn.secondary {
+    background: #f1f5f9;
+    color: #475569;
+}
+
+.friend-btn.secondary:hover {
+    background: #e2e8f0;
+}
+
+.friend-btn.danger {
+    background: #fee2e2;
+    color: #dc2626;
+    width: 100%;
+}
+
+.friend-btn.danger:hover {
+    background: #fecaca;
+}
+
+/* Список запросов */
+.requests-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.request-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: white;
+    padding: 16px 20px;
+    border-radius: 16px;
+    transition: all 0.2s;
+}
+
+.request-card:hover {
+    transform: translateX(5px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+.request-card.sent {
+    background: #f8fafc;
+}
+
+.request-avatar {
+    width: 56px;
+    height: 56px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    font-weight: bold;
+    color: white;
+}
+
+.request-avatar.pending {
+    background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+}
+
+.request-info {
+    flex: 1;
+}
+
+.request-info h4 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: #1e293b;
+}
+
+.request-info p {
+    font-size: 13px;
+    color: #64748b;
+}
+
+.request-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.request-btn {
+    padding: 8px 20px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.request-btn.accept {
+    background: #10b981;
+    color: white;
+}
+
+.request-btn.accept:hover {
+    background: #059669;
+}
+
+.request-btn.reject {
+    background: #ef4444;
+    color: white;
+}
+
+.request-btn.reject:hover {
+    background: #dc2626;
+}
+
+.request-status-badge {
+    display: flex;
+    align-items: center;
+}
+
+.pending-badge {
+    background: #fef3c7;
+    color: #92400e;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* Пустое состояние */
+.empty-friends {
+    text-align: center;
+    padding: 60px 20px;
+    background: white;
+    border-radius: 24px;
+}
+
+.empty-icon {
+    font-size: 64px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+.empty-friends h3 {
+    font-size: 20px;
+    margin-bottom: 8px;
+    color: #1e293b;
+}
+
+.empty-friends p {
+    color: #64748b;
+    margin-bottom: 24px;
+}
+
+.empty-btn {
+    display: inline-block;
+    padding: 12px 28px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    text-decoration: none;
+    border-radius: 30px;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.empty-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+/* Вкладки контент */
+.friends-tab-content {
+    display: none;
+}
+
+.friends-tab-content.active {
+    display: block;
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+    .friends-title {
+        font-size: 24px;
+    }
+    
+    .friends-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .request-card {
+        flex-direction: column;
+        text-align: center;
+    }
+    
+    .request-actions {
+        width: 100%;
+    }
+    
+    .request-btn {
+        flex: 1;
+    }
+    
+    .friend-tab {
+        padding: 8px 16px;
+        font-size: 12px;
+    }
+}
+</style>
+
+<script>
+// Переключение вкладок
+document.querySelectorAll('.friend-tab').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const tabName = this.dataset.tab;
+        
+        document.querySelectorAll('.friend-tab').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.friends-tab-content').forEach(tab => tab.classList.remove('active'));
+        
+        this.classList.add('active');
+        document.getElementById(`${tabName}-tab`).classList.add('active');
+    });
+});
+
+// Подтверждения
+document.querySelectorAll('.remove-form').forEach(form => {
+    form.addEventListener('submit', function(e) {
+        const btn = form.querySelector('button');
+        const name = btn.getAttribute('data-friend-name');
+        if (!confirm(`Удалить ${name} из друзей?`)) {
+            e.preventDefault();
+        }
+    });
+});
+
+document.querySelectorAll('.accept-form').forEach(form => {
+    form.addEventListener('submit', function(e) {
+        if (!confirm('Принять запрос в друзья?')) {
+            e.preventDefault();
+        }
+    });
+});
+
+document.querySelectorAll('.reject-form').forEach(form => {
+    form.addEventListener('submit', function(e) {
+        if (!confirm('Отклонить запрос?')) {
+            e.preventDefault();
+        }
+    });
+});
+</script>
+{% endblock %}

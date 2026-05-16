@@ -1,0 +1,51 @@
+{% extends "admin/base_admin.html" %}
+
+{% block admin_content %}
+<h1>📈 Статистика</h1>
+
+<div class="stats-grid">
+    <div class="stat-card"><div class="stat-value">{{ total_users }}</div><div class="stat-label">Всего пользователей</div></div>
+    <div class="stat-card"><div class="stat-value">{{ online_now }}</div><div class="stat-label">Сейчас онлайн</div></div>
+    <div class="stat-card"><div class="stat-value">{{ active_today }}</div><div class="stat-label">Активны сегодня</div></div>
+    <div class="stat-card"><div class="stat-value">{{ new_this_week }}</div><div class="stat-label">Новых за неделю</div></div>
+    <div class="stat-card"><div class="stat-value">{{ new_this_month }}</div><div class="stat-label">Новых за месяц</div></div>
+    <div class="stat-card"><div class="stat-value">{{ total_posts }}</div><div class="stat-label">Всего постов</div></div>
+    <div class="stat-card"><div class="stat-value">{{ total_comments }}</div><div class="stat-label">Комментариев</div></div>
+    <div class="stat-card"><div class="stat-value">{{ total_messages }}</div><div class="stat-label">Сообщений</div></div>
+    <div class="stat-card"><div class="stat-value">{{ banned_users }}</div><div class="stat-label">Заблокировано</div></div>
+</div>
+
+<div class="statistics-roles">
+    <h3>👥 По ролям</h3>
+    <div class="roles-stats">
+        <div class="role-stat owner">👑 Владельцы: {{ owners }}</div>
+        <div class="role-stat admin">👑 Администраторы: {{ admins }}</div>
+        <div class="role-stat moderator">🛡️ Модераторы: {{ moderators }}</div>
+        <div class="role-stat user">👤 Пользователи: {{ regular_users }}</div>
+    </div>
+</div>
+
+<div class="statistics-top-users">
+    <h3>🏆 Топ активных пользователей</h3>
+    <div class="top-users-list">
+        {% for user in top_users %}
+        <div class="top-user-item">
+            <span class="top-user-name">{{ user.username }}</span>
+            <span class="top-user-count">{{ user.msg_count }} сообщений</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="statistics-chart">
+    <h3>📊 Посты по дням</h3>
+    <div class="chart-bars">
+        {% for day in posts_by_day %}
+        <div class="chart-bar" style="height: {{ (day.count * 10) if day.count else 5 }}px;">
+            <span class="chart-value">{{ day.count }}</span>
+            <span class="chart-label">{{ day.date }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
