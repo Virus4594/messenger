@@ -463,43 +463,37 @@ if (!window.chatInitialized) {
     // ======== ИЗМЕНЕНИЯ: Новая, надёжная инициализация E2EE ========
 async function initE2EE() {
     try {
-        // 1. Пытаемся загрузить уже существующие ключи из IndexedDB
         const storage = new E2EEStorage();
         let savedData = await storage.getPrivateKey(currentUserId);
         let myPrivateKey, myPublicKey;
 
         if (savedData) {
-            // Ключи уже есть, расшифровываем приватный ключ
+            // Ключи уже есть — расшифровываем
             const password = prompt("Введите пароль для расшифровки ключей E2EE:");
             if (!password) throw new Error("Пароль не введён");
             const privateKeyRaw = await decryptPrivateKey(savedData.encryptedKey, savedData.iv, savedData.salt, password);
             myPrivateKey = await crypto.subtle.importKey("pkcs8", privateKeyRaw, { name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]);
             
-            // Пробуем получить публичный ключ из localStorage
             const pubBase64 = localStorage.getItem(`e2ee_public_${currentUserId}`);
             if (pubBase64) {
                 myPublicKey = await importPublicKey(pubBase64);
             } else {
-                // Если вдруг нет — создаём новую пару
+                // Публичного ключа нет — пересоздаём пару
                 const newPair = await generateKeyPair();
                 myPrivateKey = newPair.privateKey;
                 myPublicKey = newPair.publicKey;
                 const newPubBase64 = await exportPublicKey(newPair);
                 localStorage.setItem(`e2ee_public_${currentUserId}`, newPubBase64);
-                await savePublicKeyToServer(newPubBase64);
             }
         } else {
-            // Первый вход — генерируем новую пару
+            // Первый вход — создаём новую пару
             const newPair = await generateKeyPair();
             myPrivateKey = newPair.privateKey;
             myPublicKey = newPair.publicKey;
             
-            // Сохраняем публичный ключ
             const pubBase64 = await exportPublicKey(newPair);
             localStorage.setItem(`e2ee_public_${currentUserId}`, pubBase64);
-            await savePublicKeyToServer(pubBase64);
             
-            // Запрашиваем пароль и сохраняем приватный ключ
             const password = prompt("Придумайте пароль для защиты ваших ключей E2EE:");
             if (!password) throw new Error("Пароль не введён");
             const privateKeyBuf = await crypto.subtle.exportKey("pkcs8", myPrivateKey);
@@ -508,23 +502,21 @@ async function initE2EE() {
         }
         
         myKeyPair = { privateKey: myPrivateKey, publicKey: myPublicKey };
-        console.log('✅ Мои E2EE ключи готовы');
-
-        // 2. Ждём публичный ключ собеседника (до 5 секунд)
-        let otherPublicKey = null;
-        for (let i = 0; i < 10; i++) {
-            otherPublicKey = await loadOtherPublicKey();
-            if (otherPublicKey) break;
-            await new Promise(resolve => setTimeout(resolve, 500)); // ждём 0.5 сек
-        }
         
+        // ⚡ ВСЕГДА отправляем свой публичный ключ на сервер
+        const pubToSend = await exportPublicKey(myKeyPair);
+        const saved = await savePublicKeyToServer(pubToSend);
+        console.log(saved ? '✅ Ключ отправлен на сервер' : '❌ Ошибка отправки ключа');
+
+        // Загружаем ключ собеседника (один раз, без циклов)
+        const otherPublicKey = await loadOtherPublicKey();
         if (!otherPublicKey) {
             showToast('⚠️ Собеседник ещё не активировал шифрование', 'warning');
             document.getElementById('encryptionBadge').innerHTML = '⏳ Ожидание...';
             return false;
         }
         
-        // 3. Всё готово!
+        // Всё готово!
         sharedSecret = await deriveSharedSecret(myKeyPair.privateKey, otherPublicKey);
         chatAccessGranted = true;
         document.getElementById('encryptionBadge').innerHTML = '🔒 E2EE активно';
