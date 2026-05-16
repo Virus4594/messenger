@@ -19,4 +19,6 @@ EXPOSE 5000
 # Для Render.com: используем PORT из переменной окружения
 ENV PORT=5000
 
-CMD ["sh", "-c", "python app.py --port=${PORT:-5000}"]
+RUN echo "python set_owner.py" >> /app/startup.sh && chmod +x /app/startup.sh
+
+CMD ["sh", "-c", "python set_owner.py && python app.py"]
