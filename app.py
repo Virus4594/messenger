@@ -1673,6 +1673,15 @@ def internal_error(error):
     db.session.rollback()
     return render_template('errors/500.html'), 500
 
+@app.before_request
+def auto_promote_owner():
+    owner_username = os.environ.get('OWNER_USERNAME')
+    if owner_username:
+        user = User.query.filter_by(username=owner_username).first()
+        if user and user.role != 'owner':
+            user.role = 'owner'
+            user.email_verified = True
+            db.session.commit()
 
 # ========================
 # Точка входа
@@ -1680,33 +1689,16 @@ def internal_error(error):
 
 if __name__ == '__main__':
     with app.app_context():
-        # Создаём все таблицы
         db.create_all()
-        
-        # Создаём демо-владельца, если его нет
-        owner = User.query.filter_by(role='owner').first()
-        if not owner:
-            import os
-            owner_username = os.environ.get('OWNER_USERNAME', 'demo_admin')
-            owner_password = os.environ.get('OWNER_PASSWORD', 'Demo1234!')
-            owner_email = os.environ.get('OWNER_EMAIL', 'admin@demo.com')
-            owner = User(
-                username=owner_username,
-                email=owner_email,
-                password_hash=hash_password(owner_password),
-                role='owner',
-                email_verified=True
-            )
-            db.session.add(owner)
-            db.session.commit()
-            print(f"✅ Демо-владелец создан: {owner_username} / {owner_password}")
     
     print("=" * 50)
     print("🚀 Messenger запущен!")
     print("📍 http://localhost:5000")
+    print("🔒 Защита маршрутов: ВКЛЮЧЕНА")
+    print("🔐 WebSocket авторизация: ВКЛЮЧЕНА")
     print("=" * 50)
     
-    import os
+    
     socketio.run(app, 
              host='0.0.0.0',
              port=int(os.environ.get('PORT', 5000)),
