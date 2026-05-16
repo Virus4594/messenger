@@ -1680,16 +1680,16 @@ def internal_error(error):
 
 if __name__ == '__main__':
     with app.app_context():
+        # Создаём все таблицы
         db.create_all()
-        # Автоматически создаём владельца для демо
-        from models import User
-        from auth import hash_password
-        import os
-        owner_username = os.environ.get('OWNER_USERNAME', 'demo_admin')
-        owner_password = os.environ.get('OWNER_PASSWORD', 'Demo1234!')
-        owner_email = os.environ.get('OWNER_EMAIL', 'admin@demo.com')
+        
+        # Создаём демо-владельца, если его нет
         owner = User.query.filter_by(role='owner').first()
         if not owner:
+            import os
+            owner_username = os.environ.get('OWNER_USERNAME', 'demo_admin')
+            owner_password = os.environ.get('OWNER_PASSWORD', 'Demo1234!')
+            owner_email = os.environ.get('OWNER_EMAIL', 'admin@demo.com')
             owner = User(
                 username=owner_username,
                 email=owner_email,
@@ -1704,10 +1704,9 @@ if __name__ == '__main__':
     print("=" * 50)
     print("🚀 Messenger запущен!")
     print("📍 http://localhost:5000")
-    print("🔒 Защита маршрутов: ВКЛЮЧЕНА")
-    print("🔐 WebSocket авторизация: ВКЛЮЧЕНА")
     print("=" * 50)
     
+    import os
     socketio.run(app, 
              host='0.0.0.0',
              port=int(os.environ.get('PORT', 5000)),
