@@ -104,5 +104,29 @@
             });
         });
     </script>
+
+    <script>
+// Авто-обновление счётчика уведомлений
+function updateNotificationCount() {
+    fetch('/notifications/count')
+        .then(res => res.json())
+        .then(data => {
+            const badge = document.querySelector('.notification-badge');
+            if (badge) {
+                if (data.count > 0) {
+                    badge.textContent = data.count;
+                    badge.style.display = 'inline';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        });
+}
+
+// Обновляем при загрузке и каждые 10 секунд
+document.addEventListener('DOMContentLoaded', updateNotificationCount);
+setInterval(updateNotificationCount, 10000);
+</script>
+    
 </body>
 </html>
