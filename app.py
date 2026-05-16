@@ -1533,7 +1533,7 @@ def handle_typing(data):
 @app.route('/api/e2ee/public_key', methods=['POST'])
 @login_required
 def e2ee_save_public_key():
-    """Сохранение публичного ключа пользователя (только публичный ключ, приватный НИКОГДА не отправляется на сервер)"""
+    """Сохранение публичного ключа пользователя"""
     try:
         data = request.get_json()
         public_key = data.get('public_key')
@@ -1542,7 +1542,7 @@ def e2ee_save_public_key():
             return jsonify({'error': 'Нет ключа'}), 400
         
         user = db.session.get(User, session['user_id'])
-        user.public_key = public_key  # Сохраняем ТОЛЬКО публичный ключ
+        user.public_key = public_key
         db.session.commit()
         
         return jsonify({'success': True})
