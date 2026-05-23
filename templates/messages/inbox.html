@@ -4,7 +4,14 @@
 
 {% block content %}
 <div class="container">
-    <h1 style="margin-bottom: 30px;">💬 Мои сообщения</h1>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+        <h1 style="margin: 0;">💬 Мои сообщения</h1>
+        
+        <!-- КНОПКА СОЗДАНИЯ ГРУППЫ -->
+        <a href="{{ url_for('create_group') }}" class="btn-create-group">
+            👥➕ Создать группу
+        </a>
+    </div>
     
     <div style="display: flex; gap: 30px;">
         <!-- Левая колонка - список чатов -->
@@ -81,6 +88,76 @@
         </div>
     </div>
 </div>
+
+<!-- ПЛАВАЮЩАЯ КНОПКА (второй вариант) -->
+<a href="{{ url_for('create_group') }}" class="fab" title="Создать группу">
+    <span>+</span>
+</a>
+
+<style>
+/* Стиль для кнопки в хедере */
+.btn-create-group {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    padding: 12px 24px;
+    border-radius: 30px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 14px;
+    transition: all 0.3s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+.btn-create-group:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+}
+
+/* Плавающая кнопка */
+.fab {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    width: 60px;
+    height: 60px;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 32px;
+    font-weight: bold;
+    text-decoration: none;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    transition: all 0.3s ease;
+    z-index: 1000;
+}
+
+.fab:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+}
+
+/* Адаптив для телефона */
+@media (max-width: 768px) {
+    .btn-create-group {
+        padding: 8px 16px;
+        font-size: 12px;
+    }
+    
+    .fab {
+        width: 50px;
+        height: 50px;
+        font-size: 28px;
+        bottom: 20px;
+        right: 20px;
+    }
+}
+</style>
 
 <script>
 function searchChats() {
