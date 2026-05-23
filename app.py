@@ -2,13 +2,15 @@ from operator import or_, and_
 import os
 import magic
 import json
+import secrets
+from PIL import Image
 from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, g
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf import CSRFProtect
-from models import Reaction, db, User, Post, Comment, Message, Notification, Friendship, post_likes
+from models import Reaction, db, User, Post, Comment, Message, Notification, Friendship, ChatGroup, GroupMember, GroupMessage, Reaction
 from flask_migrate import Migrate
 import qrcode
 from io import BytesIO
@@ -1465,6 +1467,414 @@ def handle_typing(data):
                 'sender_username': sender.username
             }, room=f'user_{receiver_id}')
 
+# ========================
+# ГРУППОВЫЕ ЧАТЫ
+# ========================
+
+@app.route('/groups')
+@login_required
+def groups_list():
+    """Список групп пользователя"""
+    user_id = session['user_id']
+    
+    # Группы, где пользователь состоит
+    my_groups = db.session.query(ChatGroup).join(GroupMember).filter(
+        GroupMember.user_id == user_id
+    ).order_by(ChatGroup.created_at.desc()).all()
+    
+    # Группы, созданные пользователем (где он админ)
+    created_groups = ChatGroup.query.filter_by(created_by=user_id).all()
+    
+    return render_template('groups/list.html', 
+                         my_groups=my_groups, 
+                         created_groups=created_groups)
+
+
+@app.route('/groups/create', methods=['GET', 'POST'])
+@login_required
+def create_group():
+    """Создание новой группы"""
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        description = request.form.get('description', '').strip()
+        is_private = request.form.get('is_private') == 'on'
+        
+        if not name:
+            flash('Введите название группы', 'error')
+            return redirect(url_for('create_group'))
+        
+        # Генерируем ключи группы
+        
+        # Генерируем групповой ключ (AES-256)
+        group_key = secrets.token_bytes(32)
+        group_key_b64 = base64.b64encode(group_key).decode()
+        
+        # Генерируем публичный ключ группы (для верификации)
+        temp_key = E2EEncryption.generate_key_pair(secrets.token_urlsafe(32))
+        
+        group = ChatGroup(
+            name=name,
+            description=description,
+            created_by=session['user_id'],
+            is_private=is_private,
+            invite_code=secrets.token_urlsafe(16),
+            group_public_key=temp_key['public_key'],
+            encrypted_group_key=group_key_b64  # временно, потом перешифруем
+        )
+        db.session.add(group)
+        db.session.flush()
+        
+        # Добавляем создателя как админа
+        member = GroupMember(
+            group_id=group.id,
+            user_id=session['user_id'],
+            role='admin'
+        )
+        db.session.add(member)
+        db.session.commit()
+        
+        flash(f'Группа "{name}" успешно создана!', 'success')
+        return redirect(url_for('group_chat', group_id=group.id))
+    
+    return render_template('groups/create.html')
+
+
+@app.route('/groups/<int:group_id>')
+@login_required
+def group_chat(group_id):
+    """Чат группы"""
+    group = ChatGroup.query.get_or_404(group_id)
+    current_user_id = session['user_id']
+    
+    # Проверяем, есть ли пользователь в группе
+    membership = GroupMember.query.filter_by(
+        group_id=group_id, user_id=current_user_id
+    ).first()
+    
+    if not membership and group.is_private:
+        flash('Вы не состоите в этой группе', 'error')
+        return redirect(url_for('groups_list'))
+    
+    # Загружаем участников
+    members = GroupMember.query.filter_by(group_id=group_id).all()
+    
+    # Загружаем сообщения (последние 100)
+    messages = GroupMessage.query.filter_by(group_id=group_id)\
+        .order_by(GroupMessage.created_at.asc())\
+        .limit(100)\
+        .all()
+    
+    # Получаем E2EE ключ группы (если есть)
+    group_encrypted_key = None
+    if membership and membership.encrypted_group_key_for_user:
+        group_encrypted_key = membership.encrypted_group_key_for_user
+    
+    return render_template('groups/chat.html', 
+                         group=group,
+                         members=members,
+                         messages=messages,
+                         group_encrypted_key=group_encrypted_key,
+                         current_user_role=membership.role if membership else None)
+
+
+@app.route('/groups/<int:group_id>/invite')
+@login_required
+def group_invite(group_id):
+    """Получить ссылку-приглашение (только для админов)"""
+    group = ChatGroup.query.get_or_404(group_id)
+    
+    membership = GroupMember.query.filter_by(
+        group_id=group_id, user_id=session['user_id']
+    ).first()
+    
+    if not membership or membership.role != 'admin':
+        return jsonify({'error': 'Доступ запрещён. Только администраторы.'}), 403
+    
+    invite_link = url_for('join_group', code=group.invite_code, _external=True)
+    return jsonify({'invite_link': invite_link})
+
+
+@app.route('/groups/join/<code>')
+@login_required
+def join_group(code):
+    """Присоединиться к группе по ссылке"""
+    group = ChatGroup.query.filter_by(invite_code=code).first_or_404()
+    current_user_id = session['user_id']
+    
+    existing = GroupMember.query.filter_by(
+        group_id=group.id, user_id=current_user_id
+    ).first()
+    
+    if existing:
+        flash('Вы уже в группе', 'info')
+        return redirect(url_for('group_chat', group_id=group.id))
+    
+    # Добавляем участника
+    member = GroupMember(
+        group_id=group.id,
+        user_id=current_user_id,
+        role='member'
+    )
+    db.session.add(member)
+    db.session.commit()
+    
+    flash(f'Вы присоединились к группе "{group.name}"', 'success')
+    return redirect(url_for('group_chat', group_id=group.id))
+
+
+@app.route('/groups/<int:group_id>/members')
+@login_required
+def group_members(group_id):
+    """Список участников группы (API)"""
+    group = ChatGroup.query.get_or_404(group_id)
+    
+    membership = GroupMember.query.filter_by(
+        group_id=group_id, user_id=session['user_id']
+    ).first()
+    
+    if not membership:
+        return jsonify({'error': 'Нет доступа'}), 403
+    
+    members = []
+    for m in GroupMember.query.filter_by(group_id=group_id).all():
+        members.append({
+            'id': m.user.id,
+            'username': m.user.username,
+            'avatar': m.user.avatar,
+            'role': m.role,
+            'is_online': m.user.is_online
+        })
+    
+    return jsonify({'members': members})
+
+
+@app.route('/groups/<int:group_id>/add-member', methods=['POST'])
+@login_required
+def add_group_member(group_id):
+    """Добавить участника (админ)"""
+    group = ChatGroup.query.get_or_404(group_id)
+    
+    membership = GroupMember.query.filter_by(
+        group_id=group_id, user_id=session['user_id']
+    ).first()
+    
+    if not membership or membership.role != 'admin':
+        return jsonify({'error': 'Только администраторы могут добавлять участников'}), 403
+    
+    data = request.get_json()
+    username = data.get('username')
+    
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'error': 'Пользователь не найден'}), 404
+    
+    existing = GroupMember.query.filter_by(group_id=group_id, user_id=user.id).first()
+    if existing:
+        return jsonify({'error': 'Пользователь уже в группе'}), 400
+    
+    new_member = GroupMember(
+        group_id=group_id,
+        user_id=user.id,
+        role='member'
+    )
+    db.session.add(new_member)
+    db.session.commit()
+    
+    return jsonify({'success': True, 'message': f'{username} добавлен в группу'})
+
+
+@app.route('/groups/<int:group_id>/remove-member', methods=['POST'])
+@login_required
+def remove_group_member(group_id):
+    """Удалить участника (админ)"""
+    group = ChatGroup.query.get_or_404(group_id)
+    
+    current_membership = GroupMember.query.filter_by(
+        group_id=group_id, user_id=session['user_id']
+    ).first()
+    
+    if not current_membership or current_membership.role != 'admin':
+        return jsonify({'error': 'Только администраторы могут удалять участников'}), 403
+    
+    data = request.get_json()
+    user_id = data.get('user_id')
+    
+    if user_id == session['user_id']:
+        return jsonify({'error': 'Нельзя удалить себя'}), 400
+    
+    member = GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first()
+    if not member:
+        return jsonify({'error': 'Участник не найден'}), 404
+    
+    db.session.delete(member)
+    db.session.commit()
+    
+    return jsonify({'success': True})
+
+
+@app.route('/groups/<int:group_id>/leave', methods=['POST'])
+@login_required
+def leave_group(group_id):
+    """Выйти из группы"""
+    group = ChatGroup.query.get_or_404(group_id)
+    current_user_id = session['user_id']
+    
+    # Проверяем, есть ли пользователь в группе
+    member = GroupMember.query.filter_by(
+        group_id=group_id, user_id=current_user_id
+    ).first()
+    
+    if not member:
+        flash('Вы не состоите в этой группе', 'error')
+        return redirect(url_for('groups_list'))
+    
+    # Проверяем, не единственный ли это админ
+    admins = GroupMember.query.filter_by(
+        group_id=group_id, role='admin'
+    ).count()
+    
+    if member.role == 'admin' and admins == 1:
+        flash('Вы единственный администратор. Сначала назначьте другого администратора или удалите группу.', 'error')
+        return redirect(url_for('group_chat', group_id=group_id))
+    
+    # Удаляем участника
+    db.session.delete(member)
+    db.session.commit()
+    
+    flash(f'Вы вышли из группы "{group.name}"', 'info')
+    return redirect(url_for('groups_list'))
+
+
+@app.route('/groups/<int:group_id>/delete', methods=['POST'])
+@login_required
+def delete_group(group_id):
+    """Удалить группу (только создатель)"""
+    group = ChatGroup.query.get_or_404(group_id)
+    current_user_id = session['user_id']
+    
+    # Только создатель может удалить группу
+    if group.created_by != current_user_id:
+        flash('Только создатель группы может удалить её', 'error')
+        return redirect(url_for('group_chat', group_id=group_id))
+    
+    # Удаляем все сообщения и участников (cascade отработает)
+    db.session.delete(group)
+    db.session.commit()
+    
+    flash(f'Группа "{group.name}" удалена', 'success')
+    return redirect(url_for('groups_list'))
+
+
+@app.route('/groups/<int:group_id>/promote', methods=['POST'])
+@login_required
+def promote_to_admin(group_id):
+    """Назначить участника администратором (только админ)"""
+    group = ChatGroup.query.get_or_404(group_id)
+    current_user_id = session['user_id']
+    
+    current_member = GroupMember.query.filter_by(
+        group_id=group_id, user_id=current_user_id
+    ).first()
+    
+    if not current_member or current_member.role != 'admin':
+        return jsonify({'error': 'Только администраторы могут назначать администраторов'}), 403
+    
+    data = request.get_json()
+    user_id = data.get('user_id')
+    
+    target_member = GroupMember.query.filter_by(
+        group_id=group_id, user_id=user_id
+    ).first()
+    
+    if not target_member:
+        return jsonify({'error': 'Участник не найден'}), 404
+    
+    if target_member.role == 'admin':
+        return jsonify({'error': 'Пользователь уже администратор'}), 400
+    
+    target_member.role = 'admin'
+    db.session.commit()
+    
+    return jsonify({'success': True, 'message': 'Администратор назначен'})
+
+# ========================
+# WebSocket для групповых чатов (НОВЫЕ - базовая реализация групповых чатов)
+# ========================
+
+@socketio.on('join_group')
+def handle_join_group(data):
+    """Присоединение к комнате группы"""
+    if 'user_id' not in session:
+        return
+    
+    group_id = data.get('group_id')
+    user_id = session['user_id']
+    
+    # Проверяем, что пользователь в группе
+    member = GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first()
+    if member:
+        room_name = f'group_{group_id}'
+        join_room(room_name)
+        print(f'📌 User {user_id} joined group room {room_name}')
+
+
+@socketio.on('send_group_message')
+def handle_send_group_message(data):
+    """Отправка сообщения в группу"""
+    if 'user_id' not in session:
+        return
+    
+    group_id = data.get('group_id')
+    encrypted = data.get('encrypted')
+    iv = data.get('iv')
+    sender_id = session['user_id']
+    
+    # Проверка доступа
+    member = GroupMember.query.filter_by(group_id=group_id, user_id=sender_id).first()
+    if not member:
+        emit('error', {'message': 'Нет доступа к группе'})
+        return
+    
+    # Сохраняем сообщение
+    message = GroupMessage(
+        group_id=group_id,
+        sender_id=sender_id,
+        encrypted_content=encrypted,
+        encryption_nonce=iv,
+        created_at=datetime.now(timezone.utc)
+    )
+    db.session.add(message)
+    db.session.commit()
+    
+    # Отправляем всем в комнате
+    sender = db.session.get(User, sender_id)
+    room_name = f'group_{group_id}'
+    emit('new_group_message', {
+        'id': message.id,
+        'encrypted': encrypted,
+        'iv': iv,
+        'sender_id': sender_id,
+        'sender_username': sender.username,
+        'created_at': message.created_at.isoformat()
+    }, room=room_name)
+
+
+@socketio.on('group_typing')
+def handle_group_typing(data):
+    """Индикатор печатания в группе"""
+    if 'user_id' not in session:
+        return
+    
+    group_id = data.get('group_id')
+    sender_id = session['user_id']
+    sender = db.session.get(User, sender_id)
+    
+    if sender:
+        room_name = f'group_{group_id}'
+        emit('group_typing', {
+            'sender_id': sender_id,
+            'sender_username': sender.username
+        }, room=room_name, include_self=False)
 
 # ========================
 # E2EE API Роуты (НОВЫЕ - правильное E2EE)
@@ -1532,6 +1942,41 @@ def e2ee_get_messages(user_id):
     
     return jsonify({'messages': messages_data})
 
+# ========================
+# Groups API (НОВЫЕ - базовая реализация групповых чатов)
+# ========================
+
+@app.route('/api/group-messages/<int:group_id>')
+@login_required
+def api_group_messages(group_id):
+    """Получить историю сообщений группы"""
+    group = ChatGroup.query.get_or_404(group_id)
+    
+    # Проверка доступа
+    membership = GroupMember.query.filter_by(
+        group_id=group_id, user_id=session['user_id']
+    ).first()
+    
+    if not membership:
+        return jsonify({'error': 'Нет доступа'}), 403
+    
+    messages = GroupMessage.query.filter_by(group_id=group_id)\
+        .order_by(GroupMessage.created_at.asc())\
+        .limit(100)\
+        .all()
+    
+    messages_data = []
+    for msg in messages:
+        messages_data.append({
+            'id': msg.id,
+            'encrypted': msg.encrypted_content,
+            'nonce': msg.encryption_nonce,
+            'sender_id': msg.sender_id,
+            'sender_username': msg.sender.username,
+            'created_at': msg.created_at.isoformat()
+        })
+    
+    return jsonify({'messages': messages_data})
 
 # ========================
 # Аватарки

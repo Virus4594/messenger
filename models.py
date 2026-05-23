@@ -185,3 +185,103 @@ class Reaction(db.Model):
     __table_args__ = (
         db.UniqueConstraint('message_id', 'user_id', name='unique_user_message_reaction'),
     )
+
+
+# ========================
+# ГРУППОВЫЕ ЧАТЫ
+# ========================
+
+class ChatGroup(db.Model):
+    """Групповой чат"""
+    __tablename__ = 'chat_groups'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.String(500), nullable=True)
+    avatar = db.Column(db.String(200), nullable=True)
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
+    is_private = db.Column(db.Boolean, default=False)
+    invite_code = db.Column(db.String(50), unique=True, nullable=True)
+    
+    # E2EE для группы: общий ключ, зашифрованный для каждого участника
+    group_public_key = db.Column(db.Text, nullable=True)  # публичный ключ группы
+    encrypted_group_key = db.Column(db.Text, nullable=True)  # зашифрованный ключ группы
+    
+    # Связи
+    creator = db.relationship('User', foreign_keys=[created_by], backref='created_groups')
+    members = db.relationship('GroupMember', backref='group', lazy='dynamic', cascade='all, delete-orphan')
+    messages = db.relationship('GroupMessage', backref='group', lazy='dynamic', cascade='all, delete-orphan')
+    
+    @property
+    def member_count(self):
+        return self.members.count()
+    
+    @property
+    def member_list(self):
+        return [m.user for m in self.members.all()]
+
+
+class GroupMember(db.Model):
+    """Участник группы"""
+    __tablename__ = 'group_members'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('chat_groups.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    role = db.Column(db.String(20), default='member')  # admin, member
+    joined_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
+    is_muted = db.Column(db.Boolean, default=False)
+    
+    # Для E2EE: зашифрованная копия ключа группы для этого участника
+    encrypted_group_key_for_user = db.Column(db.Text, nullable=True)
+    
+    # Связи
+    user = db.relationship('User', foreign_keys=[user_id], backref='group_memberships')
+    
+    __table_args__ = (db.UniqueConstraint('group_id', 'user_id', name='unique_group_member'),)
+
+
+class GroupMessage(db.Model):
+    """Сообщение в группе"""
+    __tablename__ = 'group_messages'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('chat_groups.id'), nullable=False)
+    sender_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    
+    # E2EE поля (сообщение шифруется групповым ключом)
+    encrypted_content = db.Column(db.Text, nullable=True)
+    encryption_nonce = db.Column(db.String(100), nullable=True)
+    
+    # Стикеры и вложения
+    sticker_id = db.Column(db.Integer, nullable=True)
+    sticker_code = db.Column(db.String(10), nullable=True)
+    is_attachment = db.Column(db.Boolean, default=False)
+    attachment = db.Column(db.String(500), nullable=True)
+    attachment_type = db.Column(db.String(50), nullable=True)
+    attachment_name = db.Column(db.String(200), nullable=True)
+    attachment_size = db.Column(db.Integer, nullable=True)
+    
+    created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
+    
+    # Кто прочитал (JSON массив ID пользователей)
+    read_by = db.Column(db.Text, default='[]')
+    
+    # Связи
+    group = db.relationship('ChatGroup', foreign_keys=[group_id])
+    sender = db.relationship('User', foreign_keys=[sender_id], backref='group_messages')
+    
+    def mark_as_read(self, user_id):
+        import json
+        read_list = json.loads(self.read_by) if self.read_by else []
+        if user_id not in read_list:
+            read_list.append(user_id)
+            self.read_by = json.dumps(read_list)
+    
+    @property
+    def is_read_by_all(self):
+        import json
+        read_list = json.loads(self.read_by) if self.read_by else []
+        group_size = GroupMember.query.filter_by(group_id=self.group_id).count()
+        return len(read_list) >= group_size - 1  # минус отправитель

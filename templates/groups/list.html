@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Мои группы - Messenger{% endblock %}
+
+{% block content %}
+<div class="groups-page">
+    <div class="groups-header">
+        <h1>👥 Группы</h1>
+        <a href="{{ url_for('create_group') }}" class="btn btn-primary">
+            ➕ Создать группу
+        </a>
+    </div>
+
+    <!-- Мои группы -->
+    <div class="groups-section">
+        <h2>📌 Мои группы</h2>
+        {% if my_groups %}
+            <div class="groups-grid">
+                {% for group in my_groups %}
+                <div class="group-card" onclick="window.location.href='{{ url_for('group_chat', group_id=group.id) }}'">
+                    <div class="group-avatar">
+                        {% if group.avatar %}
+                            <img src="{{ url_for('static', filename='uploads/group_avatars/' + group.avatar) }}">
+                        {% else %}
+                            {{ group.name[:1].upper() }}
+                        {% endif %}
+                    </div>
+                    <div class="group-info">
+                        <h3>{{ group.name }}</h3>
+                        <p>{{ group.description[:50] or 'Нет описания' }}</p>
+                        <span class="member-count">👥 {{ group.member_count }} участников</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="empty-state">
+                <div class="empty-icon">👻</div>
+                <p>Вы ещё не состоите в группах</p>
+                <a href="{{ url_for('create_group') }}" class="btn">Создать первую группу</a>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+.groups-page { max-width: 1200px; margin: 0 auto; padding: 20px; }
+.groups-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+.groups-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+.group-card { display: flex; gap: 15px; background: white; border-radius: 16px; padding: 20px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.group-card:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(0,0,0,0.12); }
+.group-avatar { width: 60px; height: 60px; background: linear-gradient(135deg, #667eea, #764ba2); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; color: white; flex-shrink: 0; }
+.group-info { flex: 1; }
+.group-info h3 { margin: 0 0 5px 0; font-size: 18px; }
+.group-info p { margin: 0 0 8px 0; color: #666; font-size: 13px; }
+.member-count { font-size: 12px; color: #999; }
+.empty-state { text-align: center; padding: 60px; background: white; border-radius: 20px; }
+.empty-icon { font-size: 64px; margin-bottom: 20px; opacity: 0.5; }
+</style>
+{% endblock %}
