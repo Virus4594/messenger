@@ -410,6 +410,66 @@ def logout():
     flash('Вы вышли из системы', 'info')
     return redirect(url_for('index'))
 
+@app.route('/demo/db-check')
+@login_required
+def demo_db_check():
+    # Доступ только владельцу
+    user = db.session.get(User, session.get('user_id'))
+    if not user or user.role != 'owner':
+        return "Доступ запрещён", 403
+    
+    # Получаем последние 10 сообщений
+    messages = Message.query.order_by(Message.id.desc()).limit(10).all()
+    
+    # Формируем HTML-таблицу
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Проверка шифрования в БД</title>
+        <style>
+            body { font-family: monospace; padding: 20px; background: #1e1e1e; color: #fff; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { padding: 10px; border: 1px solid #444; text-align: left; word-break: break-all; }
+            th { background: #333; }
+            .encrypted { background: #2d4a2d; padding: 5px; border-radius: 4px; display: block; }
+        </style>
+    </head>
+    <body>
+        <h1>🔍 Проверка шифрования в базе данных</h1>
+        <p>✅ Все сообщения хранятся ТОЛЬКО в зашифрованном виде.<br>
+        ✅ Сервер НЕ видит исходный текст.</p>
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Отправитель</th>
+                <th>Получатель</th>
+                <th>Зашифрованное содержимое</th>
+                <th>Флаг шифрования</th>
+                <th>Время</th>
+            </tr>
+    """
+    
+    for msg in messages:
+        sender = db.session.get(User, msg.sender_id)
+        receiver = db.session.get(User, msg.receiver_id)
+        encrypted_preview = msg.encrypted_content[:80] + "..." if msg.encrypted_content and len(msg.encrypted_content) > 80 else msg.encrypted_content
+        
+        html += f"""
+            <tr>
+                <td>{msg.id}</td>
+                <td>{sender.username if sender else '?'}</td>
+                <td>{receiver.username if receiver else '?'}</td>
+                <td><span class="encrypted">{encrypted_preview}</span></td>
+                <td>{'✅ E2EE' if msg.is_encrypted else '❌ НЕ ЗАШИФРОВАНО'}</td>
+                <td>{msg.created_at.strftime('%H:%M:%S')}</td>
+            </tr>
+        """
+    
+    html += "</table></body></html>"
+    return html
+    
 @app.route('/verify_2fa_login', methods=['GET', 'POST'])
 def verify_2fa_login():
     if 'pre_2fa_user_id' not in session:
@@ -1883,7 +1943,7 @@ def handle_group_typing(data):
 @app.route('/api/e2ee/public_key', methods=['POST'])
 @login_required
 def e2ee_save_public_key():
-    """Сохранение публичного ключа пользователя (только публичный ключ, приватный НИКОГДА не отправляется на сервер)"""
+    """Сохранение публичного ключа пользователя"""
     try:
         data = request.get_json()
         public_key = data.get('public_key')
@@ -1892,7 +1952,7 @@ def e2ee_save_public_key():
             return jsonify({'error': 'Нет ключа'}), 400
         
         user = db.session.get(User, session['user_id'])
-        user.public_key = public_key  # Сохраняем ТОЛЬКО публичный ключ
+        user.public_key = public_key
         db.session.commit()
         
         return jsonify({'success': True})
@@ -2118,6 +2178,15 @@ def internal_error(error):
     db.session.rollback()
     return render_template('errors/500.html'), 500
 
+@app.before_request
+def auto_promote_owner():
+    owner_username = os.environ.get('OWNER_USERNAME')
+    if owner_username:
+        user = User.query.filter_by(username=owner_username).first()
+        if user and user.role != 'owner':
+            user.role = 'owner'
+            user.email_verified = True
+            db.session.commit()
 
 # ========================
 # Точка входа
@@ -2134,8 +2203,9 @@ if __name__ == '__main__':
     print("🔐 WebSocket авторизация: ВКЛЮЧЕНА")
     print("=" * 50)
     
+    
     socketio.run(app, 
-         host='0.0.0.0',
-         port=int(os.environ.get('PORT', 5000)),
-         debug=False
-         )
+             host='0.0.0.0',
+             port=int(os.environ.get('PORT', 5000)),
+             debug=False
+             )

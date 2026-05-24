@@ -15,4 +15,8 @@ services:
 
   - type: postgres
     name: messenger-db
+<<<<<<< HEAD
     plan: free
+=======
+    plan: free
+>>>>>>> bfd750f374eabbd1c4cbd33797d162731893fc7f

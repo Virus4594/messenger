@@ -19,7 +19,7 @@ class Config:
         SQLALCHEMY_DATABASE_URI = DATABASE_URL
     else:
         # Если PostgreSQL не указан, используем SQLite (для разработки)
-        SQLALCHEMY_DATABASE_URI = DATABASE_URL or 'sqlite:///KDF.db'
+        SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
     
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     

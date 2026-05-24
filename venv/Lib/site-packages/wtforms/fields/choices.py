@@ -56,9 +56,7 @@ class SelectFieldBase(Field):
                 value, label, checked = choice
                 render_kw = {}
 
-            opt = self._Option(
-                label=label, id="%s-%d" % (self.id, i), **opts, **render_kw
-            )
+            opt = self._Option(label=label, id=f"{self.id}-{i}", **opts, **render_kw)
             opt.process(None, value)
             opt.checked = checked
             yield opt
@@ -114,11 +112,11 @@ class SelectField(SelectFieldBase):
         if not choices:
             _choices = []
 
-        elif isinstance(choices[0], (list, tuple)):
+        elif isinstance(choices[0], list | tuple):
             _choices = choices
 
         else:
-            _choices = zip(choices, choices)
+            _choices = zip(choices, choices, strict=False)
 
         for value, label, *other_args in _choices:
             selected = self.coerce(value) == self.data
@@ -168,11 +166,11 @@ class SelectMultipleField(SelectField):
         if not choices:
             _choices = []
 
-        elif isinstance(choices[0], (list, tuple)):
+        elif isinstance(choices[0], list | tuple):
             _choices = choices
 
         else:
-            _choices = zip(choices, choices)
+            _choices = zip(choices, choices, strict=False)
 
         for value, label, *other_args in _choices:
             selected = self.data is not None and self.coerce(value) in self.data
