@@ -250,11 +250,9 @@ class GroupMessage(db.Model):
     group_id = db.Column(db.Integer, db.ForeignKey('chat_groups.id'), nullable=False)
     sender_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     
-    # E2EE поля (сообщение шифруется групповым ключом)
     encrypted_content = db.Column(db.Text, nullable=True)
     encryption_nonce = db.Column(db.String(100), nullable=True)
     
-    # Стикеры и вложения
     sticker_id = db.Column(db.Integer, nullable=True)
     sticker_code = db.Column(db.String(10), nullable=True)
     is_attachment = db.Column(db.Boolean, default=False)
@@ -264,24 +262,8 @@ class GroupMessage(db.Model):
     attachment_size = db.Column(db.Integer, nullable=True)
     
     created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
-    
-    # Кто прочитал (JSON массив ID пользователей)
     read_by = db.Column(db.Text, default='[]')
     
-    # Связи
-    group = db.relationship('ChatGroup', foreign_keys=[group_id])
-    sender = db.relationship('User', foreign_keys=[sender_id], backref='group_messages')
-    
-    def mark_as_read(self, user_id):
-        import json
-        read_list = json.loads(self.read_by) if self.read_by else []
-        if user_id not in read_list:
-            read_list.append(user_id)
-            self.read_by = json.dumps(read_list)
-    
-    @property
-    def is_read_by_all(self):
-        import json
-        read_list = json.loads(self.read_by) if self.read_by else []
-        group_size = GroupMember.query.filter_by(group_id=self.group_id).count()
-        return len(read_list) >= group_size - 1  # минус отправитель
+    # ИСПРАВЛЕНО: убрали конфликт имён
+    chat_group = db.relationship('ChatGroup', foreign_keys=[group_id], backref='group_messages')
+    sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_group_messages')
