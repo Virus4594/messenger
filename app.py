@@ -899,6 +899,7 @@ def friends():
 def accept_friend(friend_id):
     try:
         current_user_id = session['user_id']
+        current_user = db.session.get(User, current_user_id)
         friend = User.query.get_or_404(friend_id)
         
         friendship = Friendship.query.filter(
@@ -909,10 +910,24 @@ def accept_friend(friend_id):
         
         if friendship:
             friendship.status = 'accepted'
+            
+            # Уведомление для друга, что его приняли
+            notification = Notification(
+                user_id=friend_id,
+                type='friend_accept',
+                content=f'{current_user.username} принял ваш запрос в друзья',
+                created_at=datetime.now(timezone.utc)
+            )
+            db.session.add(notification)
             db.session.commit()
+            
             flash('Запрос принят', 'success')
-        else:
-            flash('Запрос не найден', 'error')
+            
+            # WebSocket уведомление
+            socketio.emit('notification_update', {
+                'user_id': friend_id,
+                'message': f'{current_user.username} принял вас в друзья'
+            }, room=f'user_{friend_id}')
             
     except Exception as e:
         db.session.rollback()
@@ -1113,6 +1128,7 @@ def notifications_count():
 def messages():
     user = db.session.get(User, session['user_id'])
     
+    # ========== ЛИЧНЫЕ ЧАТЫ (существующий код) ==========
     conversations = []
     
     sent_conversations = db.session.query(
@@ -1154,7 +1170,31 @@ def messages():
                 'unread_count': unread_count
             })
     
-    return render_template('messages/inbox.html', conversations=conversations)
+    # ========== НОВОЕ: ГРУППОВЫЕ ЧАТЫ ==========
+    my_groups = db.session.query(ChatGroup).join(GroupMember).filter(
+        GroupMember.user_id == user.id
+    ).order_by(ChatGroup.created_at.desc()).all()
+    
+    # Для каждой группы получаем последнее сообщение
+    groups_with_info = []
+    for group in my_groups:
+        last_msg = GroupMessage.query.filter_by(group_id=group.id)\
+            .order_by(GroupMessage.created_at.desc()).first()
+        
+        unread_count = 0  # TODO: можно добавить подсчёт непрочитанных в группах
+        
+        groups_with_info.append({
+            'group': group,
+            'last_message': last_msg.created_at if last_msg else group.created_at,
+            'unread_count': unread_count
+        })
+    
+    # Сортируем группы по последнему сообщению
+    groups_with_info.sort(key=lambda x: x['last_message'], reverse=True)
+    
+    return render_template('messages/inbox.html', 
+                         conversations=conversations,
+                         groups=groups_with_info)  # ← передаём группы в шаблон
 
 @app.route('/chat/<username>')
 @login_required
@@ -1889,10 +1929,10 @@ def handle_send_group_message(data):
     iv = data.get('iv')
     sender_id = session['user_id']
     
-    # Проверка доступа
+    # Проверка, что пользователь в группе
     member = GroupMember.query.filter_by(group_id=group_id, user_id=sender_id).first()
     if not member:
-        emit('error', {'message': 'Нет доступа к группе'})
+        emit('error', {'message': 'Нет доступа'})
         return
     
     # Сохраняем сообщение
@@ -2009,10 +2049,9 @@ def e2ee_get_messages(user_id):
 @app.route('/api/group-messages/<int:group_id>')
 @login_required
 def api_group_messages(group_id):
-    """Получить историю сообщений группы"""
+    """Получить сообщения группы"""
     group = ChatGroup.query.get_or_404(group_id)
     
-    # Проверка доступа
     membership = GroupMember.query.filter_by(
         group_id=group_id, user_id=session['user_id']
     ).first()

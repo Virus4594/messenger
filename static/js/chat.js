@@ -9,6 +9,7 @@ class SimpleChat {
         this.socket = null;
         this.processedIds = new Set();
         this.typingTimeout = null;
+        this.scrollTimeout = null;
         
         this.init();
     }
@@ -18,6 +19,53 @@ class SimpleChat {
         this.loadHistory();
         this.setupEvents();
         this.requestNotificationPermission();
+        this.setupAutoRead();
+    }
+    
+    setupAutoRead() {
+        const messagesArea = document.getElementById('chatMessagesArea');
+        
+        if (messagesArea) {
+            messagesArea.addEventListener('scroll', () => {
+                clearTimeout(this.scrollTimeout);
+                this.scrollTimeout = setTimeout(() => this.markVisibleMessagesAsRead(), 500);
+            });
+        }
+        
+        window.addEventListener('focus', () => {
+            this.markVisibleMessagesAsRead();
+        });
+    }
+    
+    markVisibleMessagesAsRead() {
+        if (!this.socket) return;
+        
+        const messagesArea = document.getElementById('chatMessagesArea');
+        if (!messagesArea) return;
+        
+        const unreadMessages = document.querySelectorAll('.chat-message.received:not(.read-marked)');
+        
+        unreadMessages.forEach(msg => {
+            const rect = msg.getBoundingClientRect();
+            const areaRect = messagesArea.getBoundingClientRect();
+            
+            if (rect.top >= areaRect.top - 50 && rect.bottom <= areaRect.bottom + 100) {
+                const messageId = msg.getAttribute('data-id');
+                if (messageId && !messageId.toString().startsWith('temp')) {
+                    msg.classList.add('read-marked');
+                    
+                    // Отправляем событие read_message (как у тебя в бэкенде)
+                    this.socket.emit('read_message', { message_id: parseInt(messageId) });
+                    
+                    // Обновляем статус для своих сообщений
+                    const statusSpan = msg.querySelector('.message-status');
+                    if (statusSpan && statusSpan.textContent === '✓') {
+                        statusSpan.textContent = '✓✓';
+                        statusSpan.title = 'Прочитано';
+                    }
+                }
+            }
+        });
     }
     
     connectSocket() {
@@ -40,10 +88,21 @@ class SimpleChat {
                 this.displayMessage(data, data.sender_id === this.currentUserId);
                 this.scrollToBottom();
                 
-                // Уведомление и звук для чужих сообщений
                 if (data.sender_id !== this.currentUserId) {
                     this.playSound();
                     this.showNotification(data);
+                }
+            }
+        });
+        
+        // Слушаем событие message_read (как у тебя в бэкенде)
+        this.socket.on('message_read', (data) => {
+            const msgElement = document.querySelector(`.chat-message[data-id="${data.message_id}"]`);
+            if (msgElement && msgElement.classList.contains('sent')) {
+                const statusSpan = msgElement.querySelector('.message-status');
+                if (statusSpan) {
+                    statusSpan.textContent = '✓✓';
+                    statusSpan.title = 'Прочитано';
                 }
             }
         });
@@ -75,6 +134,15 @@ class SimpleChat {
                     this.processedIds.add(msg.id);
                     this.displayMessage(msg, msg.sender_id === this.currentUserId);
                 });
+                this.scrollToBottom();
+                
+                // Отмечаем все непрочитанные сообщения как прочитанные
+                const unreadMessages = data.messages.filter(
+                    msg => !msg.is_read && msg.sender_id !== this.currentUserId
+                );
+                unreadMessages.forEach(msg => {
+                    this.socket.emit('read_message', { message_id: msg.id });
+                });
             } else {
                 container.innerHTML = `
                     <div class="chat-empty">
@@ -83,7 +151,6 @@ class SimpleChat {
                     </div>
                 `;
             }
-            this.scrollToBottom();
         } catch (error) {
             console.error('Ошибка:', error);
         }
@@ -93,11 +160,9 @@ class SimpleChat {
         const container = document.getElementById('chatMessagesList');
         if (!container) return;
         
-        // Убираем пустое состояние
         const empty = container.querySelector('.chat-empty');
         if (empty) empty.remove();
         
-        // Проверка дубликата
         if (document.querySelector(`.chat-message[data-id="${msg.id}"]`)) return;
         
         const messageEl = document.createElement('div');
@@ -107,10 +172,12 @@ class SimpleChat {
         const time = new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         
         if (isMine) {
+            const status = msg.is_read ? '✓✓' : '✓';
+            const statusTitle = msg.is_read ? 'Прочитано' : 'Отправлено';
             messageEl.innerHTML = `
                 <div class="message-bubble">
                     <div class="message-text">${this.escapeHtml(msg.text)}</div>
-                    <div class="message-time">${time} ✓</div>
+                    <div class="message-time">${time} <span class="message-status" title="${statusTitle}">${status}</span></div>
                 </div>
             `;
         } else {
@@ -134,24 +201,24 @@ class SimpleChat {
         input.value = '';
         input.style.height = 'auto';
         
-        // Временное сообщение
         const tempId = 'temp_' + Date.now();
         const tempMsg = {
             id: tempId,
             text: text,
             sender_id: this.currentUserId,
             sender_username: this.currentUsername,
-            created_at: new Date().toISOString()
+            created_at: new Date().toISOString(),
+            is_read: false
         };
         
         this.processedIds.add(tempId);
         this.displayMessage(tempMsg, true);
         this.scrollToBottom();
         
-        // Отправляем
         this.socket.emit('send_message', {
             text: text,
-            receiver_id: this.otherUserId
+            receiver_id: this.otherUserId,
+            temp_id: tempId
         });
     }
     
@@ -190,8 +257,6 @@ class SimpleChat {
     
     playSound() {
         try {
-            const audio = new Audio();
-            // Используем Web Audio API
             const AudioContext = window.AudioContext || window.webkitAudioContext;
             const ctx = new AudioContext();
             const oscillator = ctx.createOscillator();
@@ -208,13 +273,9 @@ class SimpleChat {
     }
     
     showNotification(data) {
-        // Звук
         this.playSound();
-        
-        // Toast уведомление
         this.showToast(`📨 ${data.sender_username}: ${data.text.substring(0, 50)}`, 'info');
         
-        // Браузерное уведомление
         if (Notification.permission === 'granted' && document.hidden) {
             new Notification(`${data.sender_username}`, {
                 body: data.text.length > 60 ? data.text.substring(0, 60) + '...' : data.text,
@@ -273,3 +334,16 @@ class SimpleChat {
         }
     }
 }
+
+// Инициализация
+document.addEventListener('DOMContentLoaded', () => {
+    const chatData = document.getElementById('chatData');
+    if (chatData) {
+        window.chat = new SimpleChat({
+            currentUserId: parseInt(chatData.dataset.currentUserId),
+            currentUsername: chatData.dataset.currentUsername,
+            otherUserId: parseInt(chatData.dataset.otherUserId),
+            otherUsername: chatData.dataset.otherUsername
+        });
+    }
+});
