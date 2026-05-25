@@ -211,7 +211,8 @@ class ChatGroup(db.Model):
     
     # ИСПРАВЛЕНО: добавляем overlaps
     messages = db.relationship('GroupMessage', backref='group', lazy='dynamic', 
-                              cascade='all, delete-orphan', overlaps="group_messages,chat_group")
+                          cascade='all, delete-orphan', 
+                          overlaps="chat_group,group_messages")
     
     @property
     def member_count(self):
@@ -268,5 +269,5 @@ class GroupMessage(db.Model):
     # оставляем только одну связь:
     chat_group = db.relationship('ChatGroup', foreign_keys=[group_id], 
                                  backref=db.backref('group_messages', lazy='dynamic'),
-                                 overlaps="messages,group")
+                                 overlaps="chat_group,group_messages")
     sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_group_messages')
