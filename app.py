@@ -2132,7 +2132,7 @@ def e2ee_get_messages(user_id):
 @app.route('/api/group-messages/<int:group_id>')
 @login_required
 def api_group_messages(group_id):
-    """Получить сообщения группы (без шифрования)"""
+    """Получить сообщения группы (упрощенно)"""
     group = ChatGroup.query.get_or_404(group_id)
     
     membership = GroupMember.query.filter_by(
@@ -2149,32 +2149,29 @@ def api_group_messages(group_id):
     
     messages_data = []
     for msg in messages:
-        # Если сообщение было зашифровано, но мы отключили E2EE,
-        # пытаемся декодировать как base64
-        content = msg.encrypted_content
-        if content:
+        # Получаем текст сообщения
+        text_content = msg.encrypted_content or ''
+        
+        # Если сообщение было в base64, декодируем
+        if text_content and not msg.sticker_code:
             try:
-                # Пробуем декодировать base64 в текст
                 import base64
-                decoded = base64.b64decode(content).decode('utf-8')
-                content = decoded
+                decoded = base64.b64decode(text_content).decode('utf-8')
+                text_content = decoded
             except:
                 pass  # Оставляем как есть
         
         messages_data.append({
             'id': msg.id,
-            'text': content,  # Отправляем как обычный текст
+            'text': text_content,  # <-- ВАЖНО: используем 'text', а не 'encrypted'
             'sender_id': msg.sender_id,
             'sender_username': msg.sender.username,
             'created_at': msg.created_at.isoformat(),
-            'is_attachment': msg.is_attachment,
-            'attachment_type': msg.attachment_type,
-            'attachment_name': msg.attachment_name,
-            'attachment_size': msg.attachment_size
+            'sticker_code': msg.sticker_code,
+            'is_attachment': msg.is_attachment
         })
     
     return jsonify({'messages': messages_data})
-
 
 @app.route('/api/group-messages/send', methods=['POST'])
 @login_required
