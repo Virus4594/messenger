@@ -3,7 +3,6 @@ import os
 import magic
 import json
 import secrets
-from PIL import Image
 from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, g
 from flask_socketio import SocketIO, emit, join_room, leave_room
