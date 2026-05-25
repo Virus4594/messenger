@@ -2469,6 +2469,23 @@ def auto_promote_owner():
             user.email_verified = True
             db.session.commit()
 
+@app.route('/admin/force-clear-messages', methods=['GET'])
+def force_clear_messages():
+    """Экстренная очистка сообщений (только для владельца)"""
+    # ВНИМАНИЕ: для продакшена добавьте проверку прав!
+    # if not current_user or current_user.role != 'owner':
+    #     return "Доступ запрещен", 403
+    
+    with app.app_context():
+        from models import Message, GroupMessage
+        db.create_all()
+        
+        m = Message.query.delete()
+        gm = GroupMessage.query.delete()
+        db.session.commit()
+        
+        return f"✅ Очищено личных: {m}, групповых: {gm}"
+
 # ========================
 # Точка входа
 # ========================
