@@ -40,19 +40,6 @@ app = Flask(__name__)
 app.config.from_object(Config)
 app.register_blueprint(admin_bp)
 os.environ['FLASK_ENV'] = 'development'
-
-if os.environ.get('CLEAR_MESSAGES') == 'true':
-    with app.app_context():
-        from models import Message, GroupMessage
-        # Создаём все таблицы, если их нет
-        db.create_all()
-        # Удаляем сообщения
-        m = Message.query.delete()
-        gm = GroupMessage.query.delete()
-        db.session.commit()
-        print(f'✅ Очищено личных сообщений: {m}')
-        print(f'✅ Очищено групповых сообщений: {gm}')
-
 # Расширения
 csrf = CSRFProtect(app)
 #csrf.exempt(admin_bp)
