@@ -2126,13 +2126,13 @@ def e2ee_get_messages(user_id):
     return jsonify({'messages': messages_data})
 
 # ========================
-# Groups API (ГРУППОВЫЕ ЧАТЫ - ПОЛНАЯ ВЕРСИЯ)
+# Groups API (ГРУППОВЫЕ ЧАТЫ - УПРОЩЕННАЯ ВЕРСИЯ БЕЗ E2EE)
 # ========================
 
 @app.route('/api/group-messages/<int:group_id>')
 @login_required
 def api_group_messages(group_id):
-    """Получить сообщения группы (зашифрованные)"""
+    """Получить сообщения группы (без шифрования)"""
     group = ChatGroup.query.get_or_404(group_id)
     
     membership = GroupMember.query.filter_by(
@@ -2149,10 +2149,21 @@ def api_group_messages(group_id):
     
     messages_data = []
     for msg in messages:
+        # Если сообщение было зашифровано, но мы отключили E2EE,
+        # пытаемся декодировать как base64
+        content = msg.encrypted_content
+        if content:
+            try:
+                # Пробуем декодировать base64 в текст
+                import base64
+                decoded = base64.b64decode(content).decode('utf-8')
+                content = decoded
+            except:
+                pass  # Оставляем как есть
+        
         messages_data.append({
             'id': msg.id,
-            'encrypted': msg.encrypted_content,
-            'nonce': msg.encryption_nonce,
+            'text': content,  # Отправляем как обычный текст
             'sender_id': msg.sender_id,
             'sender_username': msg.sender.username,
             'created_at': msg.created_at.isoformat(),
@@ -2164,21 +2175,26 @@ def api_group_messages(group_id):
     
     return jsonify({'messages': messages_data})
 
+
 @app.route('/api/group-messages/send', methods=['POST'])
 @login_required
-def send_group_message_fallback():
-    """HTTP fallback для отправки сообщений в группу (когда WebSocket не работает)"""
+def send_group_message():
+    """Отправить сообщение в группу (без шифрования)"""
     try:
         data = request.get_json()
         if not data:
             return jsonify({'error': 'Нет данных'}), 400
         
         group_id = data.get('group_id')
-        encrypted = data.get('encrypted')
-        iv = data.get('iv')
+        text = data.get('text', '')  # Простой текст, не зашифрованный
+        is_sticker = data.get('is_sticker', False)
+        sticker_code = data.get('sticker_code', '')
         
-        if not group_id or not encrypted:
-            return jsonify({'error': 'Не хватает параметров'}), 400
+        if not group_id:
+            return jsonify({'error': 'Не указана группа'}), 400
+        
+        if not text and not is_sticker:
+            return jsonify({'error': 'Нет текста сообщения'}), 400
         
         sender_id = session['user_id']
         
@@ -2187,181 +2203,65 @@ def send_group_message_fallback():
         if not member:
             return jsonify({'error': 'Нет доступа к группе'}), 403
         
-        # Сохраняем сообщение
+        # Сохраняем сообщение (в открытом виде)
         message = GroupMessage(
             group_id=group_id,
             sender_id=sender_id,
-            encrypted_content=encrypted,
-            encryption_nonce=iv,
+            encrypted_content=text,  # Сохраняем как обычный текст
+            encryption_nonce=None,
+            sticker_code=sticker_code if is_sticker else None,
             created_at=datetime.now(timezone.utc)
         )
         db.session.add(message)
         db.session.commit()
         
-        # Для уведомления других участников (если есть WebSocket)
+        # Отправляем через WebSocket (если работает)
         try:
             from flask_socketio import emit
             room_name = f'group_{group_id}'
             emit('new_group_message', {
                 'id': message.id,
-                'encrypted': encrypted,
-                'iv': iv,
+                'text': text,
                 'sender_id': sender_id,
                 'sender_username': member.user.username,
-                'created_at': message.created_at.isoformat()
+                'created_at': message.created_at.isoformat(),
+                'is_sticker': is_sticker,
+                'sticker_code': sticker_code
             }, room=room_name, namespace='/')
-        except Exception as ws_error:
-            # WebSocket может быть недоступен, это не критично
-            print(f"⚠️ WebSocket уведомление не отправлено: {ws_error}")
+        except Exception as e:
+            print(f"⚠️ WebSocket not available: {e}")
         
         return jsonify({
-            'success': True, 
+            'success': True,
             'message_id': message.id,
             'created_at': message.created_at.isoformat()
         })
         
     except Exception as e:
         db.session.rollback()
-        print(f"❌ Ошибка в send_group_message_fallback: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"❌ Ошибка: {e}")
         return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/group/<int:group_id>/key', methods=['GET'])
 @login_required
 def get_group_key_for_user(group_id):
-    """Получить зашифрованный ключ группы для текущего пользователя"""
-    group = ChatGroup.query.get_or_404(group_id)
-    
-    membership = GroupMember.query.filter_by(
-        group_id=group_id, 
-        user_id=session['user_id']
-    ).first()
-    
-    if not membership:
-        return jsonify({'error': 'Нет доступа к группе'}), 403
-    
+    """Временно отключено - возвращаем заглушку"""
     return jsonify({
-        'encrypted_key': membership.encrypted_group_key_for_user,
-        'group_public_key': group.group_public_key
+        'encrypted_key': None,
+        'group_public_key': None,
+        'e2ee_enabled': False
     })
 
 
 @app.route('/api/group/<int:group_id>/init-key', methods=['POST'])
 @login_required
 def init_group_key(group_id):
-    """Инициализация группового ключа (только для админов) - ПОЛНАЯ ВЕРСИЯ"""
-    group = ChatGroup.query.get_or_404(group_id)
-    current_user_id = session['user_id']
-    
-    membership = GroupMember.query.filter_by(
-        group_id=group_id, 
-        user_id=current_user_id
-    ).first()
-    
-    if not membership or membership.role != 'admin':
-        return jsonify({'error': 'Только администраторы могут инициализировать ключ'}), 403
-    
-    data = request.get_json()
-    group_key_base64 = data.get('group_key')  # AES-256 ключ группы в base64
-    
-    if not group_key_base64:
-        return jsonify({'error': 'Нет ключа'}), 400
-    
-    # Сохраняем зашифрованный ключ группы
-    group.encrypted_group_key = group_key_base64
-    
-    # Получаем всех участников группы
-    all_members = GroupMember.query.filter_by(group_id=group_id).all()
-    
-    encrypted_keys_for_members = []
-    
-    for member in all_members:
-        user = member.user
-        
-        # Пропускаем если нет публичного ключа
-        if not user.public_key:
-            print(f"⚠️ У пользователя {user.username} нет публичного ключа E2EE")
-            continue
-        
-        try:
-            # Импортируем публичный ключ участника (ECDH P-256)
-            from cryptography.hazmat.primitives.asymmetric import ec
-            from cryptography.hazmat.primitives import serialization
-            from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-            from cryptography.hazmat.backends import default_backend
-            import base64
-            
-            # Декодируем публичный ключ участника из base64
-            public_key_bytes = base64.b64decode(user.public_key)
-            
-            # Загружаем публичный ключ
-            peer_public_key = ec.EllipticCurvePublicKey.from_encoded_point(
-                ec.SECP256R1(),
-                public_key_bytes
-            )
-            
-            # Генерируем временную ключевую пару для этого участника
-            ephemeral_private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
-            ephemeral_public_key = ephemeral_private_key.public_key()
-            
-            # Вычисляем общий секрет
-            shared_secret = ephemeral_private_key.exchange(ec.ECDH(), peer_public_key)
-            
-            # Создаём ключ шифрования из общего секрета
-            hkdf = HKDF(
-                algorithm=hashes.SHA256(),
-                length=32,
-                salt=None,
-                info=b'group_key_encryption',
-                backend=default_backend()
-            )
-            encryption_key = hkdf.derive(shared_secret)
-            
-            # Декодируем групповой ключ из base64
-            group_key_bytes = base64.b64decode(group_key_base64)
-            
-            # Генерируем IV
-            iv = os.urandom(12)
-            
-            # Шифруем групповой ключ
-            aesgcm = AESGCM(encryption_key)
-            encrypted_group_key = aesgcm.encrypt(iv, group_key_bytes, None)
-            
-            # Формируем данные для сохранения: IV + зашифрованный ключ + публичный ключ эфемерной пары
-            ephemeral_public_bytes = ephemeral_public_key.public_bytes(
-                encoding=serialization.Encoding.X962,
-                format=serialization.PublicFormat.UncompressedPoint
-            )
-            
-            # Сохраняем: [IV(12)][ephemeral_public_key(65)][encrypted_key]
-            encrypted_package = iv + ephemeral_public_bytes + encrypted_group_key
-            encrypted_package_base64 = base64.b64encode(encrypted_package).decode('utf-8')
-            
-            # Сохраняем для участника
-            member.encrypted_group_key_for_user = encrypted_package_base64
-            encrypted_keys_for_members.append({
-                'user_id': user.id,
-                'username': user.username,
-                'status': 'encrypted'
-            })
-            
-        except Exception as e:
-            print(f"❌ Ошибка шифрования ключа для {user.username}: {e}")
-            encrypted_keys_for_members.append({
-                'user_id': user.id,
-                'username': user.username,
-                'status': 'failed',
-                'error': str(e)
-            })
-    
-    db.session.commit()
-    
+    """Временно отключено - просто возвращаем успех"""
     return jsonify({
         'success': True,
-        'message': f'Ключ группы инициализирован для {len(encrypted_keys_for_members)} участников',
-        'details': encrypted_keys_for_members
+        'message': 'E2EE временно отключен. Групповые чаты работают в обычном режиме.',
+        'e2ee_enabled': False
     })
 
 
@@ -2386,8 +2286,7 @@ def get_group_members_api(group_id):
             'username': m.user.username,
             'avatar': m.user.avatar,
             'role': m.role,
-            'is_online': m.user.is_online,
-            'public_key': m.user.public_key
+            'is_online': m.user.is_online
         })
     
     return jsonify({'members': members})
