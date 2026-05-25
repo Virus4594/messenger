@@ -33,6 +33,14 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.backends import default_backend
 
+
+
+# Инициализация приложения
+app = Flask(__name__)
+app.config.from_object(Config)
+app.register_blueprint(admin_bp)
+os.environ['FLASK_ENV'] = 'development'
+
 if os.environ.get('CLEAR_MESSAGES') == 'true':
     with app.app_context():
         from models import Message, GroupMessage
@@ -45,11 +53,6 @@ if os.environ.get('CLEAR_MESSAGES') == 'true':
         print(f'✅ Очищено личных сообщений: {m}')
         print(f'✅ Очищено групповых сообщений: {gm}')
 
-# Инициализация приложения
-app = Flask(__name__)
-app.config.from_object(Config)
-app.register_blueprint(admin_bp)
-os.environ['FLASK_ENV'] = 'development'
 # Расширения
 csrf = CSRFProtect(app)
 #csrf.exempt(admin_bp)
