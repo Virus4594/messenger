@@ -5,38 +5,37 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
-    # Безопасность
+    # Секретный ключ
     SECRET_KEY = os.environ.get('SECRET_KEY')
     if not SECRET_KEY:
-        raise ValueError("SECRET_KEY не задан! Укажите его в .env файле")
+        raise ValueError("SECRET_KEY не задан! Укажите его в переменных окружения")
     
-    WTF_CSRF_ENABLED = True
-    WTF_CSRF_SECRET_KEY = SECRET_KEY
-    
-    # База данных (поддержка PostgreSQL и SQLite)
+    # База данных - сначала проверяем Railway, потом локальный Docker
     DATABASE_URL = os.environ.get('DATABASE_URL')
-    if DATABASE_URL and DATABASE_URL.startswith('postgresql://'):
+    
+    if DATABASE_URL:
+        # Railway или другой хостинг
         SQLALCHEMY_DATABASE_URI = DATABASE_URL
+        # Если URL начинается с postgres://, меняем на postgresql:// (нужно для SQLAlchemy)
+        if SQLALCHEMY_DATABASE_URI and SQLALCHEMY_DATABASE_URI.startswith('postgres://'):
+            SQLALCHEMY_DATABASE_URI = SQLALCHEMY_DATABASE_URI.replace('postgres://', 'postgresql://', 1)
     else:
-        # Если PostgreSQL не указан, используем SQLite (для разработки)
-        SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+        # Локальная разработка (Docker)
+        SQLALCHEMY_DATABASE_URI = 'postgresql://messenger:messenger321@db:5432/messenger'
     
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
-    # Сессия
+    # Остальные настройки
     PERMANENT_SESSION_LIFETIME = timedelta(hours=2)
     SESSION_COOKIE_HTTPONLY = True
-    SESSION_COOKIE_SECURE = False  # True в продакшене с HTTPS
+    SESSION_COOKIE_SECURE = False
     SESSION_COOKIE_SAMESITE = 'Lax'
     
-    # Ограничения
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024
     UPLOAD_FOLDER = 'static/uploads'
     
-    # WebSocket
     SOCKETIO_ASYNC_MODE = 'eventlet'
     
-    # 2FA
     OTP_SECRET_LENGTH = 32
     
     # Email
