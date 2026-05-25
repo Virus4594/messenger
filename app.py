@@ -49,14 +49,6 @@ limiter = Limiter(app=app, key_func=get_remote_address)
 # Инициализация почты
 init_email(app)
 
-if os.environ.get('CLEAR_MESSAGES') == 'true':
-    with app.app_context():
-        from models import Message, GroupMessage
-        m = Message.query.delete()
-        gm = GroupMessage.query.delete()
-        db.session.commit()
-        print(f'✅ Очищено сообщений: {m}, групповых: {gm}')
-
 # ========== ГЛОБАЛЬНАЯ ЗАЩИТА ВСЕХ МАРШРУТОВ ==========
 
 # Публичные маршруты (не требуют авторизации)
