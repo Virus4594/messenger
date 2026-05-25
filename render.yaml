@@ -2,7 +2,7 @@ services:
   - type: web
     name: messenger-demo
     env: docker
-    plan: free
+    plan: free  # НЕ БЕСПЛАТНЫЙ! WebSocket нужен план от $7/мес
     envVars:
       - key: SECRET_KEY
         generateValue: true
@@ -12,7 +12,29 @@ services:
         fromDatabase:
           name: messenger-db
           property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: messenger-redis
+          property: connectionString
+      - key: SOCKETIO_MESSAGE_QUEUE
+        value: redis://${REDIS_URL}
+      - key: RENDER_WEB_SOCKET_SUPPORT
+        value: "true"
+      - key: FORCE_WEBSOCKET
+        value: "true"
+    
+    # Важно: WebSocket требует особых заголовков
+    healthCheckPath: /health
+    autoDeploy: true
+
+  - type: redis
+    name: messenger-redis
+    plan: starter  # Redis нужен для Socket.IO
+    maxmemoryPolicy: noeviction
+    ipAllowList: []  # Открыть доступ только для сервиса
 
   - type: postgres
     name: messenger-db
-    plan: free
+    plan: starter
+    ipAllowList: []

@@ -478,6 +478,17 @@ def demo_db_check():
     html += "</table></body></html>"
     return html
     
+@app.route('/health')
+def health_check():
+    """Для Render health check"""
+    return jsonify({'status': 'ok', 'websocket': socketio.server is not None}), 200
+
+@app.context_processor
+def inject_asset_version():
+    """Для обхода кэша на Render"""
+    import time
+    return {'asset_version': int(time.time())}
+
 @app.route('/verify_2fa_login', methods=['GET', 'POST'])
 def verify_2fa_login():
     if 'pre_2fa_user_id' not in session:
@@ -2153,6 +2164,68 @@ def api_group_messages(group_id):
     
     return jsonify({'messages': messages_data})
 
+@app.route('/api/group-messages/send', methods=['POST'])
+@login_required
+def send_group_message_fallback():
+    """HTTP fallback для отправки сообщений в группу (когда WebSocket не работает)"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Нет данных'}), 400
+        
+        group_id = data.get('group_id')
+        encrypted = data.get('encrypted')
+        iv = data.get('iv')
+        
+        if not group_id or not encrypted:
+            return jsonify({'error': 'Не хватает параметров'}), 400
+        
+        sender_id = session['user_id']
+        
+        # Проверка членства в группе
+        member = GroupMember.query.filter_by(group_id=group_id, user_id=sender_id).first()
+        if not member:
+            return jsonify({'error': 'Нет доступа к группе'}), 403
+        
+        # Сохраняем сообщение
+        message = GroupMessage(
+            group_id=group_id,
+            sender_id=sender_id,
+            encrypted_content=encrypted,
+            encryption_nonce=iv,
+            created_at=datetime.now(timezone.utc)
+        )
+        db.session.add(message)
+        db.session.commit()
+        
+        # Для уведомления других участников (если есть WebSocket)
+        try:
+            from flask_socketio import emit
+            room_name = f'group_{group_id}'
+            emit('new_group_message', {
+                'id': message.id,
+                'encrypted': encrypted,
+                'iv': iv,
+                'sender_id': sender_id,
+                'sender_username': member.user.username,
+                'created_at': message.created_at.isoformat()
+            }, room=room_name, namespace='/')
+        except Exception as ws_error:
+            # WebSocket может быть недоступен, это не критично
+            print(f"⚠️ WebSocket уведомление не отправлено: {ws_error}")
+        
+        return jsonify({
+            'success': True, 
+            'message_id': message.id,
+            'created_at': message.created_at.isoformat()
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Ошибка в send_group_message_fallback: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/group/<int:group_id>/key', methods=['GET'])
 @login_required

@@ -453,7 +453,20 @@
 
 <!-- В конце body, перед закрывающими тегами -->
 <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-<script src="{{ url_for('static', filename='js/group-e2ee-module.js') }}"></script>
+<script>
+    // Загружаем E2EE модуль с проверкой
+    function loadGroupE2EE() {
+        const script = document.createElement('script');
+        script.src = "{{ url_for('static', filename='js/group-e2ee-module.js') }}?v={{ asset_version }}";
+        script.onload = () => console.log('✅ Group E2EE loaded');
+        script.onerror = () => console.error('❌ Failed to load E2EE');
+        document.head.appendChild(script);
+    }
+    
+    if (typeof initGroupChat === 'undefined') {
+        loadGroupE2EE();
+    }
+</script>
 <script src="{{ url_for('static', filename='js/groups-chat.js') }}"></script>
 
 <script>
