@@ -40,19 +40,6 @@ app = Flask(__name__)
 app.config.from_object(Config)
 app.register_blueprint(admin_bp)
 os.environ['FLASK_ENV'] = 'development'
-
-if os.environ.get('CLEAR_MESSAGES') == 'true':
-    with app.app_context():
-        from models import Message, GroupMessage
-        # Создаём все таблицы, если их нет
-        db.create_all()
-        # Удаляем сообщения
-        m = Message.query.delete()
-        gm = GroupMessage.query.delete()
-        db.session.commit()
-        print(f'✅ Очищено личных сообщений: {m}')
-        print(f'✅ Очищено групповых сообщений: {gm}')
-
 # Расширения
 csrf = CSRFProtect(app)
 #csrf.exempt(admin_bp)
@@ -2481,6 +2468,23 @@ def auto_promote_owner():
             user.role = 'owner'
             user.email_verified = True
             db.session.commit()
+
+@app.route('/admin/force-clear-messages', methods=['GET'])
+def force_clear_messages():
+    """Экстренная очистка сообщений (только для владельца)"""
+    # ВНИМАНИЕ: для продакшена добавьте проверку прав!
+    # if not current_user or current_user.role != 'owner':
+    #     return "Доступ запрещен", 403
+    
+    with app.app_context():
+        from models import Message, GroupMessage
+        db.create_all()
+        
+        m = Message.query.delete()
+        gm = GroupMessage.query.delete()
+        db.session.commit()
+        
+        return f"✅ Очищено личных: {m}, групповых: {gm}"
 
 # ========================
 # Точка входа
