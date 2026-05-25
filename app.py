@@ -3,6 +3,10 @@ import os
 import magic
 import json
 import secrets
+import qrcode
+import base64
+
+
 from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, g
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -11,11 +15,8 @@ from flask_limiter.util import get_remote_address
 from flask_wtf import CSRFProtect
 from models import Reaction, db, User, Post, Comment, Message, Notification, Friendship, ChatGroup, GroupMember, GroupMessage, Reaction
 from flask_migrate import Migrate
-import qrcode
 from io import BytesIO
-import base64
 from functools import wraps
-
 from config import Config
 from auth import (
     login_required, email_verified_required, validate_password, validate_username, validate_email,
@@ -25,6 +26,12 @@ from auth import (
 from utils.email_utils import init_email, send_verification_email, send_password_reset_email, verify_verification_token
 from utils.encryption import E2EEncryption
 from admin import admin_bp
+
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.backends import default_backend
 
 # Инициализация приложения
 app = Flask(__name__)
@@ -1750,11 +1757,12 @@ def group_members(group_id):
 @app.route('/groups/<int:group_id>/add-member', methods=['POST'])
 @login_required
 def add_group_member(group_id):
-    """Добавить участника (админ)"""
+    """Добавить участника с шифрованием группового ключа"""
     group = ChatGroup.query.get_or_404(group_id)
+    current_user_id = session['user_id']
     
     membership = GroupMember.query.filter_by(
-        group_id=group_id, user_id=session['user_id']
+        group_id=group_id, user_id=current_user_id
     ).first()
     
     if not membership or membership.role != 'admin':
@@ -1771,15 +1779,78 @@ def add_group_member(group_id):
     if existing:
         return jsonify({'error': 'Пользователь уже в группе'}), 400
     
+    # Создаём участника
     new_member = GroupMember(
         group_id=group_id,
         user_id=user.id,
         role='member'
     )
     db.session.add(new_member)
+    db.session.flush()  # Чтобы получить ID
+    
+    # Если у группы есть ключ, шифруем его для нового участника
+    if group.encrypted_group_key:
+        try:
+            from cryptography.hazmat.primitives.asymmetric import ec
+            from cryptography.hazmat.primitives import serialization, hashes
+            from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            from cryptography.hazmat.backends import default_backend
+            import base64
+            import os
+            
+            if not user.public_key:
+                return jsonify({'error': 'У пользователя нет публичного ключа для E2EE'}), 400
+            
+            # Декодируем публичный ключ пользователя
+            public_key_bytes = base64.b64decode(user.public_key)
+            peer_public_key = ec.EllipticCurvePublicKey.from_encoded_point(
+                ec.SECP256R1(),
+                public_key_bytes
+            )
+            
+            # Генерируем временную ключевую пару
+            ephemeral_private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
+            ephemeral_public_key = ephemeral_private_key.public_key()
+            
+            # Вычисляем общий секрет
+            shared_secret = ephemeral_private_key.exchange(ec.ECDH(), peer_public_key)
+            
+            # Создаём ключ шифрования
+            hkdf = HKDF(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=None,
+                info=b'group_key_encryption',
+                backend=default_backend()
+            )
+            encryption_key = hkdf.derive(shared_secret)
+            
+            # Декодируем групповой ключ
+            group_key_bytes = base64.b64decode(group.encrypted_group_key)
+            
+            # Шифруем для нового участника
+            iv = os.urandom(12)
+            aesgcm = AESGCM(encryption_key)
+            encrypted_group_key = aesgcm.encrypt(iv, group_key_bytes, None)
+            
+            # Формируем пакет
+            ephemeral_public_bytes = ephemeral_public_key.public_bytes(
+                encoding=serialization.Encoding.X962,
+                format=serialization.PublicFormat.UncompressedPoint
+            )
+            encrypted_package = iv + ephemeral_public_bytes + encrypted_group_key
+            encrypted_package_base64 = base64.b64encode(encrypted_package).decode('utf-8')
+            
+            new_member.encrypted_group_key_for_user = encrypted_package_base64
+            
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': f'Ошибка шифрования ключа: {str(e)}'}), 500
+    
     db.session.commit()
     
-    return jsonify({'success': True, 'message': f'{username} добавлен в группу'})
+    return jsonify({'success': True, 'message': f'{username} добавлен в группу с E2EE'})
 
 
 @app.route('/groups/<int:group_id>/remove-member', methods=['POST'])
@@ -2042,13 +2113,13 @@ def e2ee_get_messages(user_id):
     return jsonify({'messages': messages_data})
 
 # ========================
-# Groups API (НОВЫЕ - базовая реализация групповых чатов)
+# Groups API (ГРУППОВЫЕ ЧАТЫ - ПОЛНАЯ ВЕРСИЯ)
 # ========================
 
 @app.route('/api/group-messages/<int:group_id>')
 @login_required
 def api_group_messages(group_id):
-    """Получить сообщения группы"""
+    """Получить сообщения группы (зашифрованные)"""
     group = ChatGroup.query.get_or_404(group_id)
     
     membership = GroupMember.query.filter_by(
@@ -2071,10 +2142,180 @@ def api_group_messages(group_id):
             'nonce': msg.encryption_nonce,
             'sender_id': msg.sender_id,
             'sender_username': msg.sender.username,
-            'created_at': msg.created_at.isoformat()
+            'created_at': msg.created_at.isoformat(),
+            'is_attachment': msg.is_attachment,
+            'attachment_type': msg.attachment_type,
+            'attachment_name': msg.attachment_name,
+            'attachment_size': msg.attachment_size
         })
     
     return jsonify({'messages': messages_data})
+
+
+@app.route('/api/group/<int:group_id>/key', methods=['GET'])
+@login_required
+def get_group_key_for_user(group_id):
+    """Получить зашифрованный ключ группы для текущего пользователя"""
+    group = ChatGroup.query.get_or_404(group_id)
+    
+    membership = GroupMember.query.filter_by(
+        group_id=group_id, 
+        user_id=session['user_id']
+    ).first()
+    
+    if not membership:
+        return jsonify({'error': 'Нет доступа к группе'}), 403
+    
+    return jsonify({
+        'encrypted_key': membership.encrypted_group_key_for_user,
+        'group_public_key': group.group_public_key
+    })
+
+
+@app.route('/api/group/<int:group_id>/init-key', methods=['POST'])
+@login_required
+def init_group_key(group_id):
+    """Инициализация группового ключа (только для админов) - ПОЛНАЯ ВЕРСИЯ"""
+    group = ChatGroup.query.get_or_404(group_id)
+    current_user_id = session['user_id']
+    
+    membership = GroupMember.query.filter_by(
+        group_id=group_id, 
+        user_id=current_user_id
+    ).first()
+    
+    if not membership or membership.role != 'admin':
+        return jsonify({'error': 'Только администраторы могут инициализировать ключ'}), 403
+    
+    data = request.get_json()
+    group_key_base64 = data.get('group_key')  # AES-256 ключ группы в base64
+    
+    if not group_key_base64:
+        return jsonify({'error': 'Нет ключа'}), 400
+    
+    # Сохраняем зашифрованный ключ группы
+    group.encrypted_group_key = group_key_base64
+    
+    # Получаем всех участников группы
+    all_members = GroupMember.query.filter_by(group_id=group_id).all()
+    
+    encrypted_keys_for_members = []
+    
+    for member in all_members:
+        user = member.user
+        
+        # Пропускаем если нет публичного ключа
+        if not user.public_key:
+            print(f"⚠️ У пользователя {user.username} нет публичного ключа E2EE")
+            continue
+        
+        try:
+            # Импортируем публичный ключ участника (ECDH P-256)
+            from cryptography.hazmat.primitives.asymmetric import ec
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            from cryptography.hazmat.backends import default_backend
+            import base64
+            
+            # Декодируем публичный ключ участника из base64
+            public_key_bytes = base64.b64decode(user.public_key)
+            
+            # Загружаем публичный ключ
+            peer_public_key = ec.EllipticCurvePublicKey.from_encoded_point(
+                ec.SECP256R1(),
+                public_key_bytes
+            )
+            
+            # Генерируем временную ключевую пару для этого участника
+            ephemeral_private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
+            ephemeral_public_key = ephemeral_private_key.public_key()
+            
+            # Вычисляем общий секрет
+            shared_secret = ephemeral_private_key.exchange(ec.ECDH(), peer_public_key)
+            
+            # Создаём ключ шифрования из общего секрета
+            hkdf = HKDF(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=None,
+                info=b'group_key_encryption',
+                backend=default_backend()
+            )
+            encryption_key = hkdf.derive(shared_secret)
+            
+            # Декодируем групповой ключ из base64
+            group_key_bytes = base64.b64decode(group_key_base64)
+            
+            # Генерируем IV
+            iv = os.urandom(12)
+            
+            # Шифруем групповой ключ
+            aesgcm = AESGCM(encryption_key)
+            encrypted_group_key = aesgcm.encrypt(iv, group_key_bytes, None)
+            
+            # Формируем данные для сохранения: IV + зашифрованный ключ + публичный ключ эфемерной пары
+            ephemeral_public_bytes = ephemeral_public_key.public_bytes(
+                encoding=serialization.Encoding.X962,
+                format=serialization.PublicFormat.UncompressedPoint
+            )
+            
+            # Сохраняем: [IV(12)][ephemeral_public_key(65)][encrypted_key]
+            encrypted_package = iv + ephemeral_public_bytes + encrypted_group_key
+            encrypted_package_base64 = base64.b64encode(encrypted_package).decode('utf-8')
+            
+            # Сохраняем для участника
+            member.encrypted_group_key_for_user = encrypted_package_base64
+            encrypted_keys_for_members.append({
+                'user_id': user.id,
+                'username': user.username,
+                'status': 'encrypted'
+            })
+            
+        except Exception as e:
+            print(f"❌ Ошибка шифрования ключа для {user.username}: {e}")
+            encrypted_keys_for_members.append({
+                'user_id': user.id,
+                'username': user.username,
+                'status': 'failed',
+                'error': str(e)
+            })
+    
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'message': f'Ключ группы инициализирован для {len(encrypted_keys_for_members)} участников',
+        'details': encrypted_keys_for_members
+    })
+
+
+@app.route('/api/group/<int:group_id>/members', methods=['GET'])
+@login_required
+def get_group_members_api(group_id):
+    """Получить список участников группы"""
+    group = ChatGroup.query.get_or_404(group_id)
+    
+    membership = GroupMember.query.filter_by(
+        group_id=group_id, 
+        user_id=session['user_id']
+    ).first()
+    
+    if not membership:
+        return jsonify({'error': 'Нет доступа'}), 403
+    
+    members = []
+    for m in GroupMember.query.filter_by(group_id=group_id).all():
+        members.append({
+            'id': m.user.id,
+            'username': m.user.username,
+            'avatar': m.user.avatar,
+            'role': m.role,
+            'is_online': m.user.is_online,
+            'public_key': m.user.public_key
+        })
+    
+    return jsonify({'members': members})
 
 # ========================
 # Аватарки

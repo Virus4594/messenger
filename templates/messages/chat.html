@@ -265,17 +265,46 @@ if (!window.chatInitialized) {
         };
     }
 
+    // ========== ИСПРАВЛЕННАЯ ФУНКЦИЯ decryptPrivateKey ==========
     async function decryptPrivateKey(encryptedData, ivBase64, saltBase64, password) {
-        const salt = Uint8Array.from(atob(saltBase64), c => c.charCodeAt(0));
-        const iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
-        const encrypted = Uint8Array.from(atob(encryptedData), c => c.charCodeAt(0));
-        const key = await deriveKeyFromPassword(password, salt);
-        const decrypted = await crypto.subtle.decrypt(
-            { name: "AES-GCM", iv: iv },
-            key,
-            encrypted
-        );
-        return decrypted;
+        try {
+            const salt = Uint8Array.from(atob(saltBase64), c => c.charCodeAt(0));
+            const iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
+            const encrypted = Uint8Array.from(atob(encryptedData), c => c.charCodeAt(0));
+            
+            const enc = new TextEncoder();
+            const keyMaterial = await crypto.subtle.importKey(
+                "raw",
+                enc.encode(password),
+                { name: "PBKDF2" },
+                false,
+                ["deriveKey"]
+            );
+            
+            const key = await crypto.subtle.deriveKey(
+                {
+                    name: "PBKDF2",
+                    salt: salt,
+                    iterations: 100000,
+                    hash: "SHA-256"
+                },
+                keyMaterial,
+                { name: "AES-GCM", length: 256 },
+                false,
+                ["decrypt"]
+            );
+            
+            const decrypted = await crypto.subtle.decrypt(
+                { name: "AES-GCM", iv: iv },
+                key,
+                encrypted
+            );
+            
+            return decrypted;
+        } catch (e) {
+            console.error('Decrypt private key error:', e);
+            throw new Error('Неверный пароль или повреждённые данные');
+        }
     }
 
     // ======== Вспомогательные функции ========
@@ -388,60 +417,98 @@ if (!window.chatInitialized) {
         );
     }
 
-    // ======== Шифрование сообщений (ИСПРАВЛЕНО) ========
-
-   function bufferToBase64(buffer) {
-    const bytes = new Uint8Array(buffer);
-    const chunkSize = 8192;
-    let binary = '';
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-        const chunk = bytes.subarray(i, i + chunkSize);
-        binary += String.fromCharCode.apply(null, chunk);
-    }
+    // ======== Шифрование сообщений ========
+    function bufferToBase64(buffer) {
+        const bytes = new Uint8Array(buffer);
+        const chunkSize = 8192;
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+            const chunk = bytes.subarray(i, i + chunkSize);
+            binary += String.fromCharCode.apply(null, chunk);
+        }
         return btoa(binary);
     }
 
     async function encryptMessage(message, secretKey) {
-    if (!secretKey) throw new Error('Нет ключа шифрования');
-    try {
-        const encoder = new TextEncoder();
-        const data = encoder.encode(message);
-        const iv = crypto.getRandomValues(new Uint8Array(12));
-        const encrypted = await crypto.subtle.encrypt(
-            { name: "AES-GCM", iv: iv },
-            secretKey,
-            data
-        );
-        return {
-            encrypted: bufferToBase64(encrypted),
-            iv: bufferToBase64(iv)
-        };
-    } catch(e) {
-        console.error('Encrypt error:', e);
-        throw e;
-        }
-    }
-    
-    
-    
-    async function decryptMessage(encryptedBase64, ivBase64, secretKey) {
-        if (!secretKey || !encryptedBase64 || !ivBase64) return encryptedBase64;
+        if (!secretKey) throw new Error('Нет ключа шифрования');
         try {
-            const encrypted = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
-            const iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
-            const decrypted = await crypto.subtle.decrypt(
+            const encoder = new TextEncoder();
+            const data = encoder.encode(message);
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const encrypted = await crypto.subtle.encrypt(
                 { name: "AES-GCM", iv: iv },
                 secretKey,
-                encrypted
+                data
             );
-            const decoder = new TextDecoder();
-            const decryptedText = decoder.decode(decrypted);
-            try { return JSON.parse(decryptedText); } catch(e) { return decryptedText; }
+            return {
+                encrypted: bufferToBase64(encrypted),
+                iv: bufferToBase64(iv)
+            };
         } catch(e) {
-            console.error('Decrypt error:', e);
-            return '🔒 Не удалось расшифровать';
+            console.error('Encrypt error:', e);
+            throw e;
         }
     }
+    
+    // ========== ИСПРАВЛЕННАЯ ФУНКЦИЯ decryptMessage (ДОБАВЛЕНА ПРОВЕРКА secretKey) ==========
+    async function decryptMessage(encryptedBase64, ivBase64, secretKey) {
+    // Проверяем, готов ли ключ
+    if (!secretKey) {
+        console.warn('🔑 secretKey ещё не готов');
+        return '🔒 Настройка шифрования...';
+    }
+    
+    // Если нет данных для расшифровки
+    if (!encryptedBase64 || !ivBase64) {
+        return '🔒 Пустое сообщение';
+    }
+    
+    try {
+        // Пробуем расшифровать как base64
+        let encrypted, iv;
+        
+        try {
+            encrypted = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
+            iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
+        } catch(e) {
+            // Если это не base64 - значит сообщение не зашифровано
+            console.warn('Сообщение не в base64 формате, возвращаем как есть');
+            return encryptedBase64;
+        }
+        
+        const decrypted = await crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: iv },
+            secretKey,
+            encrypted
+        );
+        
+        const decoder = new TextDecoder();
+        const decryptedText = decoder.decode(decrypted);
+        
+        // Пробуем распарсить JSON
+        try { 
+            const obj = JSON.parse(decryptedText);
+            if (obj.type === 'sticker') return obj.code;
+            if (obj.type === 'text') return obj.text;
+            return decryptedText;
+        } catch(e) { 
+            return decryptedText; 
+        }
+    } catch(e) {
+        console.error('Decrypt error:', e);
+        // Если не удалось расшифровать - возможно сообщение в старом формате
+        // Возвращаем исходный текст (если он читаемый)
+        if (encryptedBase64 && !encryptedBase64.includes('🔒')) {
+            try {
+                // Пробуем декодировать как обычный текст
+                return atob(encryptedBase64);
+            } catch(e2) {
+                return '🔒 Старое зашифрованное сообщение';
+            }
+        }
+        return '🔒 Не удалось расшифровать';
+    }
+}
 
     async function savePublicKeyToServer(publicKeyBase64) {
         const response = await fetch('/api/e2ee/public_key', {
@@ -459,77 +526,70 @@ if (!window.chatInitialized) {
         return null;
     }
 
-    // ======== Инициализация E2EE (исправлено) ========
-    // ======== ИЗМЕНЕНИЯ: Новая, надёжная инициализация E2EE ========
-async function initE2EE() {
-    try {
-        const storage = new E2EEStorage();
-        let savedData = await storage.getPrivateKey(currentUserId);
-        let myPrivateKey, myPublicKey;
+    // ======== Инициализация E2EE ========
+    async function initE2EE() {
+        try {
+            const storage = new E2EEStorage();
+            let savedData = await storage.getPrivateKey(currentUserId);
+            let myPrivateKey, myPublicKey;
 
-        if (savedData) {
-            // Ключи уже есть — расшифровываем
-            const password = prompt("Введите пароль для расшифровки ключей E2EE:");
-            if (!password) throw new Error("Пароль не введён");
-            const privateKeyRaw = await decryptPrivateKey(savedData.encryptedKey, savedData.iv, savedData.salt, password);
-            myPrivateKey = await crypto.subtle.importKey("pkcs8", privateKeyRaw, { name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]);
-            
-            const pubBase64 = localStorage.getItem(`e2ee_public_${currentUserId}`);
-            if (pubBase64) {
-                myPublicKey = await importPublicKey(pubBase64);
+            if (savedData) {
+                const password = prompt("Введите пароль для расшифровки ключей E2EE:");
+                if (!password) throw new Error("Пароль не введён");
+                const privateKeyRaw = await decryptPrivateKey(savedData.encryptedKey, savedData.iv, savedData.salt, password);
+                myPrivateKey = await crypto.subtle.importKey("pkcs8", privateKeyRaw, { name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]);
+                
+                const pubBase64 = localStorage.getItem(`e2ee_public_${currentUserId}`);
+                if (pubBase64) {
+                    myPublicKey = await importPublicKey(pubBase64);
+                } else {
+                    const newPair = await generateKeyPair();
+                    myPrivateKey = newPair.privateKey;
+                    myPublicKey = newPair.publicKey;
+                    const newPubBase64 = await exportPublicKey(newPair);
+                    localStorage.setItem(`e2ee_public_${currentUserId}`, newPubBase64);
+                }
             } else {
-                // Публичного ключа нет — пересоздаём пару
                 const newPair = await generateKeyPair();
                 myPrivateKey = newPair.privateKey;
                 myPublicKey = newPair.publicKey;
-                const newPubBase64 = await exportPublicKey(newPair);
-                localStorage.setItem(`e2ee_public_${currentUserId}`, newPubBase64);
+                
+                const pubBase64 = await exportPublicKey(newPair);
+                localStorage.setItem(`e2ee_public_${currentUserId}`, pubBase64);
+                
+                const password = prompt("Придумайте пароль для защиты ваших ключей E2EE:");
+                if (!password) throw new Error("Пароль не введён");
+                const privateKeyBuf = await crypto.subtle.exportKey("pkcs8", myPrivateKey);
+                const encrypted = await encryptPrivateKey(privateKeyBuf, password);
+                await storage.savePrivateKey(currentUserId, encrypted.encrypted, encrypted.iv, encrypted.salt);
             }
-        } else {
-            // Первый вход — создаём новую пару
-            const newPair = await generateKeyPair();
-            myPrivateKey = newPair.privateKey;
-            myPublicKey = newPair.publicKey;
             
-            const pubBase64 = await exportPublicKey(newPair);
-            localStorage.setItem(`e2ee_public_${currentUserId}`, pubBase64);
+            myKeyPair = { privateKey: myPrivateKey, publicKey: myPublicKey };
             
-            const password = prompt("Придумайте пароль для защиты ваших ключей E2EE:");
-            if (!password) throw new Error("Пароль не введён");
-            const privateKeyBuf = await crypto.subtle.exportKey("pkcs8", myPrivateKey);
-            const encrypted = await encryptPrivateKey(privateKeyBuf, password);
-            await storage.savePrivateKey(currentUserId, encrypted.encrypted, encrypted.iv, encrypted.salt);
-        }
-        
-        myKeyPair = { privateKey: myPrivateKey, publicKey: myPublicKey };
-        
-        // ⚡ ВСЕГДА отправляем свой публичный ключ на сервер
-        const pubToSend = await exportPublicKey(myKeyPair);
-        const saved = await savePublicKeyToServer(pubToSend);
-        console.log(saved ? '✅ Ключ отправлен на сервер' : '❌ Ошибка отправки ключа');
+            const pubToSend = await exportPublicKey(myKeyPair);
+            const saved = await savePublicKeyToServer(pubToSend);
+            console.log(saved ? '✅ Ключ отправлен на сервер' : '❌ Ошибка отправки ключа');
 
-        // Загружаем ключ собеседника (один раз, без циклов)
-        const otherPublicKey = await loadOtherPublicKey();
-        if (!otherPublicKey) {
-            showToast('⚠️ Собеседник ещё не активировал шифрование', 'warning');
-            document.getElementById('encryptionBadge').innerHTML = '⏳ Ожидание...';
+            const otherPublicKey = await loadOtherPublicKey();
+            if (!otherPublicKey) {
+                showToast('⚠️ Собеседник ещё не активировал шифрование', 'warning');
+                document.getElementById('encryptionBadge').innerHTML = '⏳ Ожидание...';
+                return false;
+            }
+            
+            sharedSecret = await deriveSharedSecret(myKeyPair.privateKey, otherPublicKey);
+            chatAccessGranted = true;
+            document.getElementById('encryptionBadge').innerHTML = '🔒 E2EE активно';
+            document.getElementById('messageInput').disabled = false;
+            document.getElementById('sendButton').disabled = false;
+            showToast('🔐 Шифрование включено', 'success');
+            return true;
+        } catch(e) {
+            console.error('E2EE init error:', e);
+            document.getElementById('encryptionBadge').innerHTML = '❌ Ошибка ключей';
             return false;
         }
-        
-        // Всё готово!
-        sharedSecret = await deriveSharedSecret(myKeyPair.privateKey, otherPublicKey);
-        chatAccessGranted = true;
-        document.getElementById('encryptionBadge').innerHTML = '🔒 E2EE активно';
-        document.getElementById('messageInput').disabled = false;
-        document.getElementById('sendButton').disabled = false;
-        showToast('🔐 Шифрование включено', 'success');
-        return true;
-    } catch(e) {
-        console.error('E2EE init error:', e);
-        document.getElementById('encryptionBadge').innerHTML = '❌ Ошибка ключей';
-        return false;
     }
-}
 
     async function loadStickers() {
         try {

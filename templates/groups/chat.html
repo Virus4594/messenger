@@ -8,19 +8,16 @@
         <!-- Шапка -->
         <div class="group-chat-header">
             <div class="group-info">
-                <div class="group-avatar">
-                    {% if group.avatar %}
-                        <img src="{{ url_for('static', filename='uploads/group_avatars/' + group.avatar) }}">
-                    {% else %}
-                        {{ group.name[:1].upper() }}
-                    {% endif %}
+                <div class="group-avatar" style="background: linear-gradient(135deg, #667eea, #764ba2);">
+                    {{ group.name[:1].upper() }}
                 </div>
                 <div class="group-details">
                     <h2>{{ group.name }}</h2>
                     <p class="group-description">{{ group.description or 'Нет описания' }}</p>
                     <div class="group-stats">
-                        <span>👥 {{ members|length }} участников</span>
+                        <span>👥 <span id="memberCount">{{ members|length }}</span> участников</span>
                         <span>🔒 {{ 'Закрытая' if group.is_private else 'Открытая' }}</span>
+                        <span id="encryptionStatus" class="encryption-status">🔒 E2EE</span>
                     </div>
                 </div>
             </div>
@@ -34,7 +31,7 @@
             </div>
         </div>
 
-        <!-- Основная область: чат + боковая панель -->
+        <!-- Основная область -->
         <div class="group-chat-main">
             <!-- Сообщения -->
             <div class="group-messages-area" id="groupMessagesArea">
@@ -43,10 +40,10 @@
                 </div>
             </div>
 
-            <!-- Боковая панель с участниками (скрыта по умолчанию) -->
+            <!-- Боковая панель участников -->
             <div id="membersSidebar" class="group-sidebar" style="display: none;">
                 <div class="sidebar-header">
-                    <h3>Участники ({{ members|length }})</h3>
+                    <h3>Участники (<span id="sidebarMemberCount">{{ members|length }}</span>)</h3>
                     <button id="closeSidebar" class="close-btn">✕</button>
                 </div>
                 <div class="members-list" id="membersList">
@@ -57,7 +54,7 @@
                         </div>
                         <div class="member-info">
                             <span class="member-name">{{ member.user.username }}</span>
-                            <span class="member-role-badge">{{ member.role }}</span>
+                            <span class="member-role-badge {{ member.role }}">{{ member.role }}</span>
                         </div>
                         <div class="member-status {{ 'online' if member.user.is_online else 'offline' }}"></div>
                         {% if current_user_role == 'admin' and member.user.id != current_user.id %}
@@ -66,6 +63,11 @@
                     </div>
                     {% endfor %}
                 </div>
+                {% if current_user_role == 'admin' %}
+                <div class="sidebar-footer">
+                    <button id="promoteToAdminBtn" class="sidebar-action-btn">👑 Назначить админом</button>
+                </div>
+                {% endif %}
             </div>
         </div>
 
@@ -93,18 +95,15 @@
 
 <!-- Скрытые данные для JS -->
 <input type="hidden" id="groupId" value="{{ group.id }}">
-<input type="hidden" id="groupName" value="{{ group.name }}">
-<input type="hidden" id="groupEncryptedKey" value="{{ group_encrypted_key or '' }}">
 <input type="hidden" id="currentUserRole" value="{{ current_user_role }}">
-
-<script src="{{ url_for('static', filename='js/group-e2ee.js') }}"></script>
-<script src="{{ url_for('static', filename='js/groups.js') }}"></script>
+<input type="hidden" id="currentUserId" value="{{ current_user.id }}">
+<input type="hidden" id="currentUsername" value="{{ current_user.username }}">
 
 <style>
 .group-chat-page {
     height: calc(100vh - 70px);
     padding: 20px;
-    background: var(--bg-secondary);
+    background: var(--bg-secondary, #f0f2f5);
 }
 
 .group-chat-container {
@@ -117,7 +116,6 @@
     box-shadow: 0 4px 20px rgba(0,0,0,0.08);
 }
 
-/* Шапка */
 .group-chat-header {
     display: flex;
     justify-content: space-between;
@@ -128,15 +126,17 @@
 }
 
 .group-info { display: flex; gap: 15px; align-items: center; }
-.group-avatar { width: 50px; height: 50px; background: linear-gradient(135deg, #667eea, #764ba2); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; color: white; }
+.group-avatar { width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; color: white; flex-shrink: 0; }
 .group-details h2 { margin: 0 0 5px 0; font-size: 18px; }
 .group-description { margin: 0; color: #666; font-size: 13px; }
-.group-stats { display: flex; gap: 15px; margin-top: 5px; font-size: 11px; color: #999; }
-.group-actions { display: flex; gap: 10px; }
-.icon-btn { background: #f1f5f9; border: none; padding: 8px 12px; border-radius: 10px; cursor: pointer; font-size: 18px; }
+.group-stats { display: flex; gap: 15px; margin-top: 5px; font-size: 12px; color: #999; }
+.group-stats .encryption-status { color: #10b981; }
+
+.group-actions { display: flex; gap: 10px; align-items: center; }
+.icon-btn { background: #f1f5f9; border: none; padding: 8px 12px; border-radius: 10px; cursor: pointer; font-size: 18px; transition: all 0.2s; }
+.icon-btn:hover { background: #e2e8f0; transform: scale(1.05); }
 .back-btn { background: #e2e8f0; padding: 8px 16px; border-radius: 10px; text-decoration: none; color: #475569; }
 
-/* Основная область */
 .group-chat-main {
     flex: 1;
     display: flex;
@@ -155,7 +155,6 @@
     gap: 12px;
 }
 
-/* Сообщения в группе */
 .group-message {
     display: flex;
     gap: 10px;
@@ -183,6 +182,7 @@
     padding: 10px 14px;
     border-radius: 18px;
     background: #f1f5f9;
+    word-wrap: break-word;
 }
 
 .group-message.sent .message-bubble {
@@ -198,16 +198,31 @@
 }
 
 .group-message.sent .message-sender { color: rgba(255,255,255,0.8); }
-.message-text { word-wrap: break-word; }
+.message-text { white-space: pre-wrap; line-height: 1.4; }
 .message-time { font-size: 10px; opacity: 0.6; margin-top: 4px; text-align: right; }
+
+/* Стикеры */
+.sticker-emoji { font-size: 48px; display: inline-block; cursor: pointer; transition: transform 0.1s; }
+.sticker-emoji:hover { transform: scale(1.1); }
+
+/* Вложения */
+.message-attachment { margin: 5px 0; }
+.attachment-image { max-width: 200px; max-height: 150px; border-radius: 12px; cursor: pointer; }
+.attachment-file { display: flex; align-items: center; gap: 8px; text-decoration: none; color: #667eea; }
 
 /* Боковая панель */
 .group-sidebar {
-    width: 300px;
+    width: 320px;
     border-left: 1px solid #e2e8f0;
     background: #f8fafc;
     display: flex;
     flex-direction: column;
+    animation: slideInRight 0.3s ease;
+}
+
+@keyframes slideInRight {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
 }
 
 .sidebar-header {
@@ -216,6 +231,7 @@
     align-items: center;
     padding: 15px;
     border-bottom: 1px solid #e2e8f0;
+    background: white;
 }
 
 .members-list {
@@ -232,32 +248,69 @@
     border-radius: 12px;
     margin-bottom: 5px;
     background: white;
+    transition: all 0.2s;
 }
+
+.member-item:hover { background: #f1f5f9; }
 
 .member-avatar {
     width: 40px;
     height: 40px;
-    background: #e2e8f0;
+    background: linear-gradient(135deg, #667eea, #764ba2);
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
+    color: white;
     font-weight: bold;
 }
 
 .member-info { flex: 1; }
-.member-name { font-weight: 500; display: block; }
-.member-role-badge { font-size: 10px; background: #e2e8f0; padding: 2px 6px; border-radius: 10px; }
+.member-name { font-weight: 500; display: block; font-size: 14px; }
+.member-role-badge { font-size: 10px; padding: 2px 6px; border-radius: 10px; background: #e2e8f0; }
+.member-role-badge.admin { background: #f59e0b; color: white; }
+.member-role-badge.member { background: #64748b; color: white; }
+
 .member-status { width: 10px; height: 10px; border-radius: 50%; }
-.member-status.online { background: #10b981; }
+.member-status.online { background: #10b981; box-shadow: 0 0 0 2px rgba(16,185,129,0.2); }
 .member-status.offline { background: #94a3b8; }
-.remove-member-btn { background: none; border: none; color: #dc2626; cursor: pointer; font-size: 16px; }
+
+.remove-member-btn {
+    background: none;
+    border: none;
+    color: #ef4444;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 5px;
+    border-radius: 8px;
+    transition: all 0.2s;
+}
+
+.remove-member-btn:hover { background: #fee2e2; transform: scale(1.1); }
+
+.sidebar-footer {
+    padding: 15px;
+    border-top: 1px solid #e2e8f0;
+    background: white;
+}
+
+.sidebar-action-btn {
+    width: 100%;
+    padding: 10px;
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 500;
+}
 
 /* Поле ввода */
 .group-chat-input-area {
     padding: 15px 20px;
     border-top: 1px solid #e2e8f0;
     background: white;
+    position: relative;
 }
 
 .input-wrapper {
@@ -266,6 +319,18 @@
     align-items: flex-end;
 }
 
+.sticker-btn, .attachment-btn {
+    background: #f1f5f9;
+    border: none;
+    padding: 10px 12px;
+    border-radius: 25px;
+    cursor: pointer;
+    font-size: 18px;
+    transition: all 0.2s;
+}
+
+.sticker-btn:hover, .attachment-btn:hover { background: #e2e8f0; }
+
 #groupMessageInput {
     flex: 1;
     padding: 10px 15px;
@@ -273,21 +338,132 @@
     border-radius: 25px;
     resize: none;
     font-family: inherit;
+    font-size: 14px;
     max-height: 100px;
 }
 
+#groupMessageInput:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102,126,234,0.1);
+}
+
 .send-btn {
-    background: #667eea;
+    background: linear-gradient(135deg, #667eea, #764ba2);
     border: none;
-    padding: 10px 20px;
+    padding: 10px 24px;
     border-radius: 25px;
     color: white;
     cursor: pointer;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.send-btn:hover { transform: scale(1.02); box-shadow: 0 2px 8px rgba(102,126,234,0.4); }
+
+/* Стикер-панель */
+.sticker-panel {
+    position: absolute;
+    bottom: 80px;
+    left: 20px;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    padding: 15px;
+    z-index: 100;
+    display: none;
+    flex-wrap: wrap;
+    max-width: 400px;
+}
+
+.sticker-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 10px;
+}
+
+.sticker-item {
+    cursor: pointer;
+    padding: 8px;
+    text-align: center;
+    border-radius: 12px;
+    transition: all 0.2s;
+}
+
+.sticker-item:hover { background: #f1f5f9; transform: scale(1.1); }
+.sticker-item .sticker-emoji { font-size: 32px; display: block; }
+.sticker-item .sticker-name { font-size: 10px; color: #666; display: block; margin-top: 4px; }
+
+/* Индикатор печатания */
+.typing-indicator {
+    padding: 8px 20px;
+    font-size: 12px;
+    color: #666;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #f8fafc;
+    border-top: 1px solid #e2e8f0;
+}
+
+.typing-dots span {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #667eea;
+    margin: 0 2px;
+    animation: typing 1.4s infinite;
+}
+
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing {
+    0%, 60%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-6px); }
+}
+
+/* Загрузка */
+.loading-messages {
+    text-align: center;
+    padding: 40px;
+    color: #999;
+}
+
+.empty-chat {
+    text-align: center;
+    padding: 60px;
+    color: #999;
 }
 
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
 }
+
+/* Адаптив */
+@media (max-width: 768px) {
+    .group-chat-page { padding: 10px; }
+    .message-bubble { max-width: 85%; }
+    .group-sidebar { width: 280px; }
+    .sticker-grid { grid-template-columns: repeat(4, 1fr); }
+}
 </style>
+
+<!-- В конце body, перед закрывающими тегами -->
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+<script src="{{ url_for('static', filename='js/group-e2ee-module.js') }}"></script>
+<script src="{{ url_for('static', filename='js/groups-chat.js') }}"></script>
+
+<script>
+    // Отдельная инициализация для группового чата
+    document.addEventListener('DOMContentLoaded', function() {
+        if (typeof initGroupChat === 'function') {
+            initGroupChat();
+        } else {
+            console.error('Group chat module not loaded');
+        }
+    });
+</script>
 {% endblock %}

@@ -192,7 +192,6 @@ class Reaction(db.Model):
 # ========================
 
 class ChatGroup(db.Model):
-    """Групповой чат"""
     __tablename__ = 'chat_groups'
     
     id = db.Column(db.Integer, primary_key=True)
@@ -204,14 +203,15 @@ class ChatGroup(db.Model):
     is_private = db.Column(db.Boolean, default=False)
     invite_code = db.Column(db.String(50), unique=True, nullable=True)
     
-    # E2EE для группы: общий ключ, зашифрованный для каждого участника
-    group_public_key = db.Column(db.Text, nullable=True)  # публичный ключ группы
-    encrypted_group_key = db.Column(db.Text, nullable=True)  # зашифрованный ключ группы
+    group_public_key = db.Column(db.Text, nullable=True)
+    encrypted_group_key = db.Column(db.Text, nullable=True)
     
-    # Связи
     creator = db.relationship('User', foreign_keys=[created_by], backref='created_groups')
     members = db.relationship('GroupMember', backref='group', lazy='dynamic', cascade='all, delete-orphan')
-    messages = db.relationship('GroupMessage', backref='group', lazy='dynamic', cascade='all, delete-orphan')
+    
+    # ИСПРАВЛЕНО: добавляем overlaps
+    messages = db.relationship('GroupMessage', backref='group', lazy='dynamic', 
+                              cascade='all, delete-orphan', overlaps="group_messages,chat_group")
     
     @property
     def member_count(self):
@@ -243,7 +243,6 @@ class GroupMember(db.Model):
 
 
 class GroupMessage(db.Model):
-    """Сообщение в группе"""
     __tablename__ = 'group_messages'
     
     id = db.Column(db.Integer, primary_key=True)
@@ -264,6 +263,10 @@ class GroupMessage(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
     read_by = db.Column(db.Text, default='[]')
     
-    # ИСПРАВЛЕНО: убрали конфликт имён
-    chat_group = db.relationship('ChatGroup', foreign_keys=[group_id], backref='group_messages')
+    # ИСПРАВЛЕНО: убираем дублирующиеся связи
+    # chat_group = db.relationship('ChatGroup', foreign_keys=[group_id], backref='group_messages')
+    # оставляем только одну связь:
+    chat_group = db.relationship('ChatGroup', foreign_keys=[group_id], 
+                                 backref=db.backref('group_messages', lazy='dynamic'),
+                                 overlaps="messages,group")
     sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_group_messages')
