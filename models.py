@@ -252,6 +252,7 @@ class GroupMessage(db.Model):
     
     encrypted_content = db.Column(db.Text, nullable=True)
     encryption_nonce = db.Column(db.String(100), nullable=True)
+    message_mac = db.Column(db.String(200), nullable=True)  # ДОБАВЛЕНО: MAC для целостности
     
     sticker_id = db.Column(db.Integer, nullable=True)
     sticker_code = db.Column(db.String(10), nullable=True)
@@ -264,10 +265,6 @@ class GroupMessage(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
     read_by = db.Column(db.Text, default='[]')
     
-    # ИСПРАВЛЕНО: убираем дублирующиеся связи
-    # chat_group = db.relationship('ChatGroup', foreign_keys=[group_id], backref='group_messages')
-    # оставляем только одну связь:
     chat_group = db.relationship('ChatGroup', foreign_keys=[group_id], 
-                                 backref=db.backref('group_messages', lazy='dynamic'),
-                                 overlaps="chat_group,group_messages")
+                                 backref=db.backref('group_messages', lazy='dynamic'))
     sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_group_messages')

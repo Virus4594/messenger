@@ -27,7 +27,7 @@
                 <button id="addMemberBtn" class="icon-btn" title="Добавить участника">➕</button>
                 {% endif %}
                 <button id="membersBtn" class="icon-btn" title="Участники">👥</button>
-                <a href="{{ url_for('groups_list') }}" class="back-btn">← Назад</a>
+                 <a href="{{ url_for('groups_list') }}" class="back-btn">← Назад</a>
             </div>
         </div>
 
@@ -451,32 +451,8 @@
 }
 </style>
 
-<!-- В конце body, перед закрывающими тегами -->
 <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-<script>
-    // Загружаем E2EE модуль с проверкой
-    function loadGroupE2EE() {
-        const script = document.createElement('script');
-        script.src = "{{ url_for('static', filename='js/group-e2ee-module.js') }}?v={{ asset_version }}";
-        script.onload = () => console.log('✅ Group E2EE loaded');
-        script.onerror = () => console.error('❌ Failed to load E2EE');
-        document.head.appendChild(script);
-    }
-    
-    if (typeof initGroupChat === 'undefined') {
-        loadGroupE2EE();
-    }
-</script>
+<!-- ИСПРАВКА: Загружаем E2EE класс ДО группового чата -->
+<script src="{{ url_for('static', filename='js/group-e2ee.js') }}"></script>
 <script src="{{ url_for('static', filename='js/groups-chat.js') }}"></script>
-
-<script>
-    // Отдельная инициализация для группового чата
-    document.addEventListener('DOMContentLoaded', function() {
-        if (typeof initGroupChat === 'function') {
-            initGroupChat();
-        } else {
-            console.error('Group chat module not loaded');
-        }
-    });
-</script>
 {% endblock %}

@@ -1,171 +1,145 @@
-// groups-chat.js - упрощенная версия без E2EE
+// groups.js - Полноценный групповой чат
 let groupSocket = null;
-let currentGroupId = null;
+let groupE2EE = null;
+let groupId = null;
 let currentUserId = null;
 let currentUserRole = null;
-let pollingInterval = null;
+let processedMessages = new Set();
 
-async function initGroupChat() {
-    console.log('🚀 Инициализация группового чата (режим без E2EE)');
-    
-    currentGroupId = document.getElementById('groupId')?.value;
+// Инициализация при загрузке
+document.addEventListener('DOMContentLoaded', async () => {
+    groupId = document.getElementById('groupId')?.value;
     currentUserId = document.getElementById('currentUserId')?.value;
     currentUserRole = document.getElementById('currentUserRole')?.value;
     
-    if (!currentGroupId || !currentUserId) {
-        console.error('❌ Не найдены данные группы');
+    if (!groupId) {
+        console.error('❌ Нет ID группы');
         return;
     }
     
-    // Загружаем сообщения
+    console.log('🚀 Запуск группового чата:', groupId);
+    
+    // Инициализируем E2EE
+    groupE2EE = new GroupE2EE(groupId, currentUserId);
+    await groupE2EE.init();
+    
+    initGroupSocket();
     await loadGroupMessages();
-    
-    // Настраиваем WebSocket
-    setupGroupSocket();
-    
-    // Настраиваем обработчики событий
     setupGroupEventListeners();
+    await loadGroupStickers();
     
-    // Запускаем polling как fallback
-    startPolling();
-    
-    console.log('✅ Групповой чат инициализирован');
-}
+    // Проверяем доступные кнопки
+    console.log('🔍 Доступные кнопки:', {
+        addMemberBtn: !!document.getElementById('addMemberBtn'),
+        inviteBtn: !!document.getElementById('inviteBtn'),
+        membersBtn: !!document.getElementById('membersBtn')
+    });
+});
 
-function setupGroupSocket() {
-    if (typeof io !== 'undefined') {
-        groupSocket = io();
+function initGroupSocket() {
+    groupSocket = io({ transports: ['websocket', 'polling'] });
+    
+    groupSocket.on('connect', () => {
+        console.log('✅ WebSocket группы подключён');
+        groupSocket.emit('join_group', { group_id: parseInt(groupId) });
+    });
+    
+    groupSocket.on('new_group_message', async (data) => {
+        if (processedMessages.has(data.id)) return;
+        processedMessages.add(data.id);
         
-        groupSocket.on('connect', () => {
-            console.log('✅ WebSocket подключен');
-            groupSocket.emit('join_group', { group_id: currentGroupId });
+        let displayText = data.encrypted || '📎';
+        
+        // ИСПРАВКА: Проверяем целостность через HMAC перед дешифровкой
+        if (groupE2EE && groupE2EE.ready && data.encrypted && data.iv && data.mac) {
+            displayText = await groupE2EE.decryptMessage(data.encrypted, data.iv, data.mac);
+        }
+        
+        addMessageToDOM({
+            id: data.id,
+            text: displayText,
+            sender_id: data.sender_id,
+            sender_username: data.sender_username,
+            created_at: data.created_at,
+            is_mine: data.sender_id == currentUserId
         });
         
-        groupSocket.on('new_group_message', (data) => {
-            console.log('📨 Новое сообщение:', data);
-            if (data.sender_id != currentUserId) {
-                displayGroupMessage(
-                    data.sender_username,
-                    data.text,
-                    data.created_at,
-                    false,
-                    data.is_sticker,
-                    data.sticker_code
-                );
+        if (data.sender_id != currentUserId && !document.hasFocus()) {
+            playNotificationSound();
+            showNotification(data.sender_username, displayText);
+        }
+    });
+    
+    groupSocket.on('group_typing', (data) => {
+        if (data.sender_id != currentUserId) {
+            const indicator = document.getElementById('groupTypingIndicator');
+            const usernameSpan = document.getElementById('groupTypingUsername');
+            if (indicator && usernameSpan) {
+                usernameSpan.textContent = data.sender_username;
+                indicator.style.display = 'flex';
+                setTimeout(() => indicator.style.display = 'none', 3000);
             }
-        });
-        
-        groupSocket.on('group_typing', (data) => {
-            showTypingIndicator(data.sender_username);
-        });
-        
-        groupSocket.on('connect_error', (error) => {
-            console.warn('⚠️ WebSocket ошибка:', error);
-        });
-    } else {
-        console.warn('⚠️ Socket.IO не загружен, используем только polling');
-    }
+        }
+    });
 }
 
-function startPolling() {
-    if (pollingInterval) clearInterval(pollingInterval);
-    
-    pollingInterval = setInterval(async () => {
-        await loadGroupMessages(true); // true = только новые сообщения
-    }, 5000);
-}
-
-async function loadGroupMessages(onlyNew = false) {
+async function loadGroupMessages() {
     try {
-        const response = await fetch(`/api/group-messages/${currentGroupId}`);
+        const response = await fetch(`/api/group-messages/${groupId}`);
         const data = await response.json();
         
-        if (!data.messages || data.messages.length === 0) {
-            if (!onlyNew) {
-                const container = document.getElementById('groupMessagesList');
-                if (container && container.children.length === 0) {
-                    container.innerHTML = '<div class="empty-chat">💬 Напишите первое сообщение!</div>';
-                }
-            }
-            return;
-        }
+        const container = document.getElementById('groupMessagesList');
+        if (!container) return;
         
-        const lastMessageId = localStorage.getItem(`group_last_id_${currentGroupId}`) || 0;
+        container.innerHTML = '';
+        processedMessages.clear();
         
-        if (onlyNew) {
-            // Показываем только новые сообщения
-            const newMessages = data.messages.filter(m => m.id > lastMessageId);
-            for (const msg of newMessages) {
-                if (msg.sender_id != currentUserId) {
-                    displayGroupMessage(
-                        msg.sender_username,
-                        msg.text,
-                        msg.created_at,
-                        false,
-                        false,
-                        null
-                    );
+        if (data.messages && data.messages.length > 0) {
+            for (const msg of data.messages) {
+                let displayText = msg.encrypted || '📎';
+                
+                // ИСПРАВКА: Проверяем HMAC целостность при загрузке истории
+                if (groupE2EE && groupE2EE.ready && msg.encrypted && msg.iv && msg.mac) {
+                    displayText = await groupE2EE.decryptMessage(msg.encrypted, msg.iv, msg.mac);
                 }
-            }
-            if (newMessages.length > 0) {
-                localStorage.setItem(`group_last_id_${currentGroupId}`, data.messages[data.messages.length - 1].id);
+                
+                addMessageToDOM({
+                    id: msg.id,
+                    text: displayText,
+                    sender_id: msg.sender_id,
+                    sender_username: msg.sender_username,
+                    created_at: msg.created_at,
+                    is_mine: msg.sender_id == currentUserId
+                });
             }
         } else {
-            // Полная перезагрузка
-            const container = document.getElementById('groupMessagesList');
-            if (!container) return;
-            
-            container.innerHTML = '';
-            
-            for (const msg of data.messages) {
-                displayGroupMessage(
-                    msg.sender_username,
-                    msg.text,
-                    msg.created_at,
-                    msg.sender_id == currentUserId,
-                    false,
-                    null
-                );
-            }
-            
-            if (data.messages.length > 0) {
-                localStorage.setItem(`group_last_id_${currentGroupId}`, data.messages[data.messages.length - 1].id);
-            }
-            
-            scrollToBottom();
+            container.innerHTML = '<div class="empty-chat">💬 Напишите первое сообщение в группе!</div>';
         }
-    } catch (error) {
-        console.error('❌ Ошибка загрузки сообщений:', error);
+        
+        scrollToBottom();
+    } catch(e) {
+        console.error('Load error:', e);
     }
 }
 
-function displayGroupMessage(username, text, timestamp, isMine, isSticker, stickerCode) {
+function addMessageToDOM(msg) {
     const container = document.getElementById('groupMessagesList');
     if (!container) return;
     
-    // Убираем заглушку "нет сообщений"
-    const emptyDiv = container.querySelector('.empty-chat');
-    if (emptyDiv) emptyDiv.remove();
+    const loader = container.querySelector('.loading-messages');
+    if (loader) loader.remove();
     
     const messageDiv = document.createElement('div');
-    messageDiv.className = `group-message ${isMine ? 'sent' : 'received'}`;
+    messageDiv.className = `group-message ${msg.is_mine ? 'sent' : 'received'}`;
     
-    const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const date = new Date(timestamp).toLocaleDateString();
-    
-    let contentHtml = '';
-    if (isSticker && stickerCode) {
-        contentHtml = `<div class="sticker-emoji" style="font-size: 48px;">${stickerCode}</div>`;
-    } else {
-        contentHtml = `<div class="message-text">${escapeHtml(text || '...')}</div>`;
-    }
+    const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     
     messageDiv.innerHTML = `
-        <div class="message-avatar">${escapeHtml(username.charAt(0).toUpperCase())}</div>
+        <div class="message-avatar">${(msg.sender_username || '?').charAt(0).toUpperCase()}</div>
         <div class="message-bubble">
-            <div class="message-sender">${escapeHtml(username)}</div>
-            ${contentHtml}
-            <div class="message-time">${time} <span class="message-date">${date}</span></div>
+            ${!msg.is_mine ? `<div class="message-sender">${escapeHtml(msg.sender_username)}</div>` : ''}
+            <div class="message-text">${escapeHtml(msg.text)}</div>
+            <div class="message-time">${time}</div>
         </div>
     `;
     
@@ -182,274 +156,281 @@ async function sendGroupMessage() {
     input.value = '';
     input.style.height = 'auto';
     
-    // Показываем временное сообщение
-    displayGroupMessage(
-        document.getElementById('currentUsername')?.value || 'Вы',
-        text,
-        new Date().toISOString(),
-        true,
-        false,
-        null
-    );
+    let encrypted = text;
+    let iv = null;
+    let mac = null;
     
-    try {
-        const response = await fetch('/api/group-messages/send', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCsrfToken()
-            },
-            body: JSON.stringify({
-                group_id: currentGroupId,
-                text: text,
-                is_sticker: false
-            })
+    if (groupE2EE && groupE2EE.ready) {
+        const enc = await groupE2EE.encryptMessage(JSON.stringify({ type: 'text', text: text }));
+        encrypted = enc.encrypted;
+        iv = enc.iv;
+        mac = enc.mac;  // ИСПРАВКА: Теперь отправляем HMAC для целостности
+    }
+    
+    if (groupSocket && groupSocket.connected) {
+        groupSocket.emit('send_group_message', {
+            group_id: parseInt(groupId),
+            encrypted: encrypted,
+            iv: iv,
+            mac: mac,  // ИСПРАВКА: Отправляем HMAC
+            temp_id: 'temp_' + Date.now()
         });
-        
-        const data = await response.json();
-        
-        if (!data.success) {
-            console.error('Send error:', data.error);
-            alert('Ошибка отправки: ' + (data.error || 'Неизвестная ошибка'));
-        }
-    } catch (error) {
-        console.error('Network error:', error);
-        alert('Ошибка сети. Попробуйте еще раз.');
     }
 }
 
-function setupGroupEventListeners() {
-    const sendBtn = document.getElementById('sendGroupButton');
-    const input = document.getElementById('groupMessageInput');
-    const membersBtn = document.getElementById('membersBtn');
-    const closeSidebar = document.getElementById('closeSidebar');
-    const stickerBtn = document.getElementById('stickerBtn');
-    const stickerPanel = document.getElementById('stickerPanel');
+async function sendGroupSticker(stickerId, stickerCode) {
+    let encrypted = null;
+    let iv = null;
+    let mac = null;
     
-    if (sendBtn) {
-        sendBtn.addEventListener('click', sendGroupMessage);
+    if (groupE2EE && groupE2EE.ready) {
+        const enc = await groupE2EE.encryptMessage(JSON.stringify({ type: 'sticker', code: stickerCode, id: stickerId }));
+        encrypted = enc.encrypted;
+        iv = enc.iv;
+        mac = enc.mac;  // ИСПРАВКА: Добавляем HMAC
     }
     
-    if (input) {
-        input.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendGroupMessage();
-            }
-        });
-        
-        input.addEventListener('input', function() {
-            this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 100) + 'px';
-            
-            if (groupSocket && groupSocket.connected) {
-                groupSocket.emit('group_typing', { group_id: currentGroupId });
-            }
+    if (groupSocket && groupSocket.connected) {
+        groupSocket.emit('send_group_message', {
+            group_id: parseInt(groupId),
+            encrypted: encrypted,
+            iv: iv,
+            mac: mac,  // ИСПРАВКА: Отправляем HMAC
+            is_sticker: true,
+            sticker_id: stickerId,
+            sticker_code: stickerCode
         });
     }
     
-    if (membersBtn) {
-        membersBtn.addEventListener('click', toggleMembersSidebar);
-    }
-    
-    if (closeSidebar) {
-        closeSidebar.addEventListener('click', () => {
-            const sidebar = document.getElementById('membersSidebar');
-            if (sidebar) sidebar.style.display = 'none';
-        });
-    }
-    
-    if (stickerBtn && stickerPanel) {
-        stickerBtn.addEventListener('click', () => {
-            const isVisible = stickerPanel.style.display === 'flex';
-            stickerPanel.style.display = isVisible ? 'none' : 'flex';
-        });
-        
-        // Загружаем стикеры
-        loadStickers();
-    }
-    
-    // Закрыть стикер-панель при клике вне
-    document.addEventListener('click', (e) => {
-        if (stickerPanel && !stickerPanel.contains(e.target) && e.target !== stickerBtn) {
-            stickerPanel.style.display = 'none';
-        }
-    });
+    document.getElementById('stickerPanel').style.display = 'none';
 }
 
-async function loadStickers() {
+async function loadGroupStickers() {
     try {
         const response = await fetch('/api/stickers');
         const stickers = await response.json();
         
         const stickerGrid = document.querySelector('.sticker-grid');
-        if (!stickerGrid) return;
-        
-        stickerGrid.innerHTML = '';
-        
-        stickers.forEach(sticker => {
-            const stickerEl = document.createElement('div');
-            stickerEl.className = 'sticker-item';
-            stickerEl.innerHTML = `<span class="sticker-emoji">${sticker.code}</span><span class="sticker-name">${sticker.name}</span>`;
-            stickerEl.onclick = () => sendSticker(sticker.code);
-            stickerGrid.appendChild(stickerEl);
-        });
-    } catch (error) {
-        console.error('Ошибка загрузки стикеров:', error);
-    }
-}
-
-async function sendSticker(stickerCode) {
-    const stickerPanel = document.getElementById('stickerPanel');
-    if (stickerPanel) stickerPanel.style.display = 'none';
-    
-    try {
-        const response = await fetch('/api/group-messages/send', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCsrfToken()
-            },
-            body: JSON.stringify({
-                group_id: currentGroupId,
-                text: stickerCode,
-                is_sticker: true,
-                sticker_code: stickerCode
-            })
-        });
-        
-        const data = await response.json();
-        if (data.success) {
-            displayGroupMessage(
-                document.getElementById('currentUsername')?.value || 'Вы',
-                stickerCode,
-                new Date().toISOString(),
-                true,
-                true,
-                stickerCode
-            );
+        if (stickerGrid) {
+            stickerGrid.innerHTML = '';
+            stickers.forEach(sticker => {
+                const stickerEl = document.createElement('div');
+                stickerEl.className = 'sticker-item';
+                stickerEl.innerHTML = `<span class="sticker-emoji">${sticker.code}</span>`;
+                stickerEl.onclick = () => sendGroupSticker(sticker.id, sticker.code);
+                stickerGrid.appendChild(stickerEl);
+            });
         }
-    } catch (error) {
-        console.error('Sticker send error:', error);
+    } catch(e) {
+        console.error('Stickers error:', e);
     }
 }
 
+// ========== НОВЫЕ ФУНКЦИИ ДЛЯ КНОПОК ==========
+
+// Генерация ссылки-приглашения
+async function generateGroupInvite() {
+    console.log('🔗 Генерация ссылки-приглашения...');
+    try {
+        const response = await fetch(`/groups/${groupId}/invite`);
+        const data = await response.json();
+        
+        console.log('Ответ сервера:', data);
+        
+        if (data.invite_link) {
+            // Копируем ссылку в буфер обмена
+            await navigator.clipboard.writeText(data.invite_link);
+            showToast('🔗 Ссылка-приглашение скопирована в буфер обмена!', 'success');
+        } else {
+            showToast('❌ Ошибка: не удалось получить ссылку', 'error');
+        }
+    } catch (e) {
+        console.error('Ошибка генерации ссылки:', e);
+        showToast('❌ Ошибка генерации ссылки: ' + e.message, 'error');
+    }
+}
+
+// Диалог добавления участника
+function showAddMemberDialog() {
+    console.log('👥 Открытие диалога добавления участника...');
+    const username = prompt('Введите имя пользователя для добавления в группу:');
+    
+    if (!username || !username.trim()) {
+        return;
+    }
+    
+    console.log('Добавляем пользователя:', username);
+    showToast(`⏳ Добавление ${username}...`, 'info');
+    
+    fetch(`/groups/${groupId}/add-member`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCsrfToken()
+        },
+        body: JSON.stringify({ username: username.trim() })
+    })
+    .then(res => res.json())
+    .then(data => {
+        console.log('Ответ сервера:', data);
+        if (data.success) {
+            showToast(`✅ ${username} добавлен в группу`, 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showToast(`❌ ${data.error || 'Ошибка добавления'}`, 'error');
+        }
+    })
+    .catch(err => {
+        console.error('Ошибка:', err);
+        showToast('❌ Ошибка при добавлении пользователя', 'error');
+    });
+}
+
+// Переключение боковой панели участников
 function toggleMembersSidebar() {
     const sidebar = document.getElementById('membersSidebar');
-    if (!sidebar) return;
-    
-    if (sidebar.style.display === 'none' || !sidebar.style.display) {
-        sidebar.style.display = 'flex';
-        loadMembersList();
+    if (sidebar) {
+        const isVisible = sidebar.style.display === 'flex';
+        sidebar.style.display = isVisible ? 'none' : 'flex';
+        console.log('Боковая панель:', isVisible ? 'скрыта' : 'показана');
     } else {
-        sidebar.style.display = 'none';
+        console.warn('Элемент membersSidebar не найден');
     }
 }
 
-async function loadMembersList() {
-    try {
-        const response = await fetch(`/api/group/${currentGroupId}/members`);
-        const data = await response.json();
-        
-        const membersList = document.getElementById('membersList');
-        const memberCountSpan = document.getElementById('sidebarMemberCount');
-        
-        if (!membersList) return;
-        
-        if (memberCountSpan) {
-            memberCountSpan.textContent = data.members.length;
-        }
-        
-        membersList.innerHTML = '';
-        
-        for (const member of data.members) {
-            const memberDiv = document.createElement('div');
-            memberDiv.className = 'member-item';
-            memberDiv.dataset.userId = member.id;
-            
-            memberDiv.innerHTML = `
-                <div class="member-avatar">${escapeHtml(member.username.charAt(0).toUpperCase())}</div>
-                <div class="member-info">
-                    <span class="member-name">${escapeHtml(member.username)}</span>
-                    <span class="member-role-badge ${member.role}">${member.role === 'admin' ? 'Админ' : 'Участник'}</span>
-                </div>
-                <div class="member-status ${member.is_online ? 'online' : 'offline'}"></div>
-                ${currentUserRole === 'admin' && member.id != currentUserId ? `<button class="remove-member-btn" data-user-id="${member.id}" data-username="${escapeHtml(member.username)}">🗑️</button>` : ''}
-            `;
-            
-            membersList.appendChild(memberDiv);
-        }
-        
-        // Добавляем обработчики для кнопок удаления
-        document.querySelectorAll('.remove-member-btn').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                const userId = btn.dataset.userId;
-                const username = btn.dataset.username;
-                
-                if (confirm(`Удалить ${username} из группы?`)) {
-                    await removeMember(userId);
-                }
-            });
-        });
-        
-    } catch (error) {
-        console.error('Error loading members:', error);
-    }
+// Получение CSRF токена
+function getCsrfToken() {
+    let token = document.querySelector('meta[name="csrf-token"]');
+    if (token) return token.getAttribute('content');
+    token = document.querySelector('input[name="csrf_token"]');
+    if (token) return token.value;
+    return '';
 }
 
-async function removeMember(userId) {
+// Удаление участника
+async function removeGroupMember(userId, username) {
+    if (!confirm(`Удалить участника "${username}" из группы?`)) return;
+    
     try {
-        const response = await fetch(`/groups/${currentGroupId}/remove-member`, {
+        const response = await fetch(`/groups/${groupId}/remove-member`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-CSRFToken': getCsrfToken()
             },
-            body: JSON.stringify({ user_id: userId })
+            body: JSON.stringify({ user_id: parseInt(userId) })
         });
         
         const data = await response.json();
         
         if (data.success) {
-            await loadMembersList();
-            // Обновляем счетчик участников в шапке
-            const memberCountSpan = document.getElementById('memberCount');
-            if (memberCountSpan) {
-                const currentCount = parseInt(memberCountSpan.textContent);
-                memberCountSpan.textContent = currentCount - 1;
-            }
+            showToast(`✅ ${username} удалён из группы`, 'success');
+            setTimeout(() => location.reload(), 1000);
         } else {
-            alert('Ошибка: ' + (data.error || 'Не удалось удалить участника'));
+            showToast(`❌ ${data.error}`, 'error');
         }
-    } catch (error) {
-        console.error('Remove member error:', error);
-        alert('Ошибка при удалении участника');
+    } catch (e) {
+        console.error('Ошибка удаления:', e);
+        showToast('❌ Ошибка удаления', 'error');
     }
 }
 
-function showTypingIndicator(username) {
-    const indicator = document.getElementById('groupTypingIndicator');
-    const usernameSpan = document.getElementById('groupTypingUsername');
-    
-    if (indicator && usernameSpan) {
-        usernameSpan.textContent = username;
-        indicator.style.display = 'flex';
-        
-        clearTimeout(window.typingTimeout);
-        window.typingTimeout = setTimeout(() => {
-            indicator.style.display = 'none';
-        }, 3000);
+// ========== НАСТРОЙКА ОБРАБОТЧИКОВ ==========
+
+function setupGroupEventListeners() {
+    // Отправка сообщения
+    const sendBtn = document.getElementById('sendGroupButton');
+    if (sendBtn) {
+        sendBtn.onclick = sendGroupMessage;
+        console.log('✅ Кнопка отправки привязана');
+    } else {
+        console.warn('sendGroupButton не найден');
     }
+    
+    // Поле ввода
+    const input = document.getElementById('groupMessageInput');
+    if (input) {
+        input.onkeydown = (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendGroupMessage();
+            }
+        };
+        
+        input.oninput = function() {
+            if (groupSocket && groupSocket.connected) {
+                groupSocket.emit('group_typing', { group_id: parseInt(groupId) });
+            }
+        };
+        console.log('✅ Поле ввода привязано');
+    } else {
+        console.warn('groupMessageInput не найден');
+    }
+    
+    // Кнопка стикеров
+    const stickerBtn = document.getElementById('stickerBtn');
+    if (stickerBtn) {
+        stickerBtn.onclick = () => {
+            const panel = document.getElementById('stickerPanel');
+            if (panel) {
+                panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+            }
+        };
+        console.log('✅ Кнопка стикеров привязана');
+    }
+    
+    // Кнопка участников
+    const membersBtn = document.getElementById('membersBtn');
+    if (membersBtn) {
+        membersBtn.onclick = toggleMembersSidebar;
+        console.log('✅ Кнопка участников привязана');
+    } else {
+        console.warn('membersBtn не найден');
+    }
+    
+    // Кнопка добавления участника (для админов)
+    const addMemberBtn = document.getElementById('addMemberBtn');
+    if (addMemberBtn) {
+        addMemberBtn.onclick = showAddMemberDialog;
+        console.log('✅ Кнопка добавления участника привязана');
+    } else {
+        console.warn('addMemberBtn не найден (возможно, вы не админ)');
+    }
+    
+    // Кнопка приглашения (для админов)
+    const inviteBtn = document.getElementById('inviteBtn');
+    if (inviteBtn) {
+        inviteBtn.onclick = generateGroupInvite;
+        console.log('✅ Кнопка приглашения привязана');
+    } else {
+        console.warn('inviteBtn не найден (возможно, вы не админ)');
+    }
+    
+    // Кнопка закрытия боковой панели
+    const closeSidebar = document.getElementById('closeSidebar');
+    if (closeSidebar) {
+        closeSidebar.onclick = () => {
+            const sidebar = document.getElementById('membersSidebar');
+            if (sidebar) sidebar.style.display = 'none';
+        };
+        console.log('✅ Кнопка закрытия панели привязана');
+    }
+    
+    // Кнопки удаления участников
+    document.querySelectorAll('.remove-member-btn').forEach(btn => {
+        btn.onclick = () => {
+            const userId = btn.getAttribute('data-user-id');
+            const username = btn.getAttribute('data-username');
+            if (userId && username) {
+                removeGroupMember(userId, username);
+            }
+        };
+    });
 }
 
 function scrollToBottom() {
     const area = document.getElementById('groupMessagesArea');
-    if (area) {
-        setTimeout(() => {
-            area.scrollTop = area.scrollHeight;
-        }, 100);
-    }
+    if (area) setTimeout(() => area.scrollTop = area.scrollHeight, 100);
 }
 
 function escapeHtml(text) {
@@ -459,18 +440,67 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-function getCsrfToken() {
-    let token = document.querySelector('meta[name="csrf-token"]');
-    if (token) return token.getAttribute('content');
-    token = document.querySelector('input[name="csrf_token"]');
-    if (token) return token.value;
-    return '';
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `toast-notification ${type}`;
+    toast.innerHTML = `<span>${message}</span><button onclick="this.parentElement.remove()">×</button>`;
+    toast.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#333'};
+        color: white;
+        padding: 12px 20px;
+        border-radius: 12px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        z-index: 10000;
+        animation: slideIn 0.3s ease;
+    `;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 4000);
 }
 
-// Запускаем при загрузке
-document.addEventListener('DOMContentLoaded', () => {
-    // Даем время на загрузку остальных скриптов
-    setTimeout(initGroupChat, 500);
-});
+function playNotificationSound() {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const context = new AudioCtx();
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.frequency.value = 880;
+        gain.gain.value = 0.3;
+        oscillator.start();
+        gain.gain.exponentialRampToValueAtTime(0.00001, context.currentTime + 0.3);
+        oscillator.stop(context.currentTime + 0.3);
+        if (context.state === 'suspended') context.resume();
+    } catch(e) {}
+}
 
-window.initGroupChat = initGroupChat;
+function showNotification(username, message) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    if (document.hasFocus()) return;
+    
+    const notification = new Notification(`📨 ${username} в группе`, {
+        body: message.length > 60 ? message.substring(0, 60) + '...' : message,
+        icon: '/static/favicon.ico'
+    });
+    notification.onclick = () => window.focus();
+}
+
+// Запрашиваем разрешение на уведомления
+if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+}
+
+// Добавляем стиль для анимации
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+`;
+document.head.appendChild(style);

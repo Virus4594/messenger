@@ -1,3 +1,4 @@
+// groups.js - Полноценный групповой чат
 let groupSocket = null;
 let groupE2EE = null;
 let groupId = null;
@@ -26,13 +27,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadGroupMessages();
     setupGroupEventListeners();
     await loadGroupStickers();
-    
-    // Проверяем доступные кнопки
-    console.log('🔍 Доступные кнопки:', {
-        addMemberBtn: !!document.getElementById('addMemberBtn'),
-        inviteBtn: !!document.getElementById('inviteBtn'),
-        membersBtn: !!document.getElementById('membersBtn')
-    });
 });
 
 function initGroupSocket() {
@@ -47,10 +41,11 @@ function initGroupSocket() {
         if (processedMessages.has(data.id)) return;
         processedMessages.add(data.id);
         
-        let displayText = data.encrypted || '📎';
+        let displayText = data.encrypted || '📎 Вложение';
         
         if (groupE2EE && groupE2EE.ready && data.encrypted && data.iv) {
-            displayText = await groupE2EE.decryptMessage(data.encrypted, data.iv);
+            const decrypted = await groupE2EE.decryptMessage(data.encrypted, data.iv);
+            displayText = decrypted;
         }
         
         addMessageToDOM({
@@ -62,6 +57,7 @@ function initGroupSocket() {
             is_mine: data.sender_id == currentUserId
         });
         
+        // Уведомление
         if (data.sender_id != currentUserId && !document.hasFocus()) {
             playNotificationSound();
             showNotification(data.sender_username, displayText);
@@ -217,128 +213,10 @@ async function loadGroupStickers() {
     }
 }
 
-// ========== НОВЫЕ ФУНКЦИИ ДЛЯ КНОПОК ==========
-
-// Генерация ссылки-приглашения
-async function generateGroupInvite() {
-    console.log('🔗 Генерация ссылки-приглашения...');
-    try {
-        const response = await fetch(`/groups/${groupId}/invite`);
-        const data = await response.json();
-        
-        console.log('Ответ сервера:', data);
-        
-        if (data.invite_link) {
-            // Копируем ссылку в буфер обмена
-            await navigator.clipboard.writeText(data.invite_link);
-            showToast('🔗 Ссылка-приглашение скопирована в буфер обмена!', 'success');
-        } else {
-            showToast('❌ Ошибка: не удалось получить ссылку', 'error');
-        }
-    } catch (e) {
-        console.error('Ошибка генерации ссылки:', e);
-        showToast('❌ Ошибка генерации ссылки: ' + e.message, 'error');
-    }
-}
-
-// Диалог добавления участника
-function showAddMemberDialog() {
-    console.log('👥 Открытие диалога добавления участника...');
-    const username = prompt('Введите имя пользователя для добавления в группу:');
-    
-    if (!username || !username.trim()) {
-        return;
-    }
-    
-    console.log('Добавляем пользователя:', username);
-    showToast(`⏳ Добавление ${username}...`, 'info');
-    
-    fetch(`/groups/${groupId}/add-member`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': getCsrfToken()
-        },
-        body: JSON.stringify({ username: username.trim() })
-    })
-    .then(res => res.json())
-    .then(data => {
-        console.log('Ответ сервера:', data);
-        if (data.success) {
-            showToast(`✅ ${username} добавлен в группу`, 'success');
-            setTimeout(() => location.reload(), 1500);
-        } else {
-            showToast(`❌ ${data.error || 'Ошибка добавления'}`, 'error');
-        }
-    })
-    .catch(err => {
-        console.error('Ошибка:', err);
-        showToast('❌ Ошибка при добавлении пользователя', 'error');
-    });
-}
-
-// Переключение боковой панели участников
-function toggleMembersSidebar() {
-    const sidebar = document.getElementById('membersSidebar');
-    if (sidebar) {
-        const isVisible = sidebar.style.display === 'flex';
-        sidebar.style.display = isVisible ? 'none' : 'flex';
-        console.log('Боковая панель:', isVisible ? 'скрыта' : 'показана');
-    } else {
-        console.warn('Элемент membersSidebar не найден');
-    }
-}
-
-// Получение CSRF токена
-function getCsrfToken() {
-    let token = document.querySelector('meta[name="csrf-token"]');
-    if (token) return token.getAttribute('content');
-    token = document.querySelector('input[name="csrf_token"]');
-    if (token) return token.value;
-    return '';
-}
-
-// Удаление участника
-async function removeGroupMember(userId, username) {
-    if (!confirm(`Удалить участника "${username}" из группы?`)) return;
-    
-    try {
-        const response = await fetch(`/groups/${groupId}/remove-member`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCsrfToken()
-            },
-            body: JSON.stringify({ user_id: parseInt(userId) })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            showToast(`✅ ${username} удалён из группы`, 'success');
-            setTimeout(() => location.reload(), 1000);
-        } else {
-            showToast(`❌ ${data.error}`, 'error');
-        }
-    } catch (e) {
-        console.error('Ошибка удаления:', e);
-        showToast('❌ Ошибка удаления', 'error');
-    }
-}
-
-// ========== НАСТРОЙКА ОБРАБОТЧИКОВ ==========
-
 function setupGroupEventListeners() {
-    // Отправка сообщения
     const sendBtn = document.getElementById('sendGroupButton');
-    if (sendBtn) {
-        sendBtn.onclick = sendGroupMessage;
-        console.log('✅ Кнопка отправки привязана');
-    } else {
-        console.warn('sendGroupButton не найден');
-    }
+    if (sendBtn) sendBtn.onclick = sendGroupMessage;
     
-    // Поле ввода
     const input = document.getElementById('groupMessageInput');
     if (input) {
         input.onkeydown = (e) => {
@@ -353,70 +231,32 @@ function setupGroupEventListeners() {
                 groupSocket.emit('group_typing', { group_id: parseInt(groupId) });
             }
         };
-        console.log('✅ Поле ввода привязано');
-    } else {
-        console.warn('groupMessageInput не найден');
     }
     
-    // Кнопка стикеров
     const stickerBtn = document.getElementById('stickerBtn');
     if (stickerBtn) {
         stickerBtn.onclick = () => {
             const panel = document.getElementById('stickerPanel');
-            if (panel) {
-                panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
-            }
+            panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
         };
-        console.log('✅ Кнопка стикеров привязана');
     }
     
-    // Кнопка участников
     const membersBtn = document.getElementById('membersBtn');
     if (membersBtn) {
-        membersBtn.onclick = toggleMembersSidebar;
-        console.log('✅ Кнопка участников привязана');
-    } else {
-        console.warn('membersBtn не найден');
+        membersBtn.onclick = () => {
+            const sidebar = document.getElementById('membersSidebar');
+            if (sidebar) {
+                sidebar.style.display = sidebar.style.display === 'none' ? 'flex' : 'none';
+            }
+        };
     }
     
-    // Кнопка добавления участника (для админов)
-    const addMemberBtn = document.getElementById('addMemberBtn');
-    if (addMemberBtn) {
-        addMemberBtn.onclick = showAddMemberDialog;
-        console.log('✅ Кнопка добавления участника привязана');
-    } else {
-        console.warn('addMemberBtn не найден (возможно, вы не админ)');
-    }
-    
-    // Кнопка приглашения (для админов)
-    const inviteBtn = document.getElementById('inviteBtn');
-    if (inviteBtn) {
-        inviteBtn.onclick = generateGroupInvite;
-        console.log('✅ Кнопка приглашения привязана');
-    } else {
-        console.warn('inviteBtn не найден (возможно, вы не админ)');
-    }
-    
-    // Кнопка закрытия боковой панели
     const closeSidebar = document.getElementById('closeSidebar');
     if (closeSidebar) {
         closeSidebar.onclick = () => {
-            const sidebar = document.getElementById('membersSidebar');
-            if (sidebar) sidebar.style.display = 'none';
+            document.getElementById('membersSidebar').style.display = 'none';
         };
-        console.log('✅ Кнопка закрытия панели привязана');
     }
-    
-    // Кнопки удаления участников
-    document.querySelectorAll('.remove-member-btn').forEach(btn => {
-        btn.onclick = () => {
-            const userId = btn.getAttribute('data-user-id');
-            const username = btn.getAttribute('data-username');
-            if (userId && username) {
-                removeGroupMember(userId, username);
-            }
-        };
-    });
 }
 
 function scrollToBottom() {
@@ -429,28 +269,6 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
-}
-
-function showToast(message, type = 'info') {
-    const toast = document.createElement('div');
-    toast.className = `toast-notification ${type}`;
-    toast.innerHTML = `<span>${message}</span><button onclick="this.parentElement.remove()">×</button>`;
-    toast.style.cssText = `
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#333'};
-        color: white;
-        padding: 12px 20px;
-        border-radius: 12px;
-        display: flex;
-        gap: 10px;
-        align-items: center;
-        z-index: 10000;
-        animation: slideIn 0.3s ease;
-    `;
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 4000);
 }
 
 function playNotificationSound() {
@@ -485,13 +303,3 @@ function showNotification(username, message) {
 if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
 }
-
-// Добавляем стиль для анимации
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideIn {
-        from { transform: translateX(100%); opacity: 0; }
-        to { transform: translateX(0); opacity: 1; }
-    }
-`;
-document.head.appendChild(style);
