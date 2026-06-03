@@ -73,7 +73,7 @@ Tech: Python/Flask, PostgreSQL, Redis, WebSocket, Docker
 
 Interested in buying this project or have questions?
 
-- **Telegram:** [@virus_messeger_dev](https://t.me/virus_messeger_dev)
+- **Telegram:** [@Virus_Dev_messege](https://t.me/Virus_Dev_messege)
 - **Email:** [virusvirusov22@gmail.com](mailto:virusvirusov22@gmail.com)
 - **GitHub Issues:** Feel free to open an issue in this repository.
 
@@ -94,7 +94,7 @@ Upon purchase, you will receive full source code and a perpetual license to use,
 4. You receive full source code (Git repository access).
 5. I provide 7 days of support for setup and deployment.
 
-**Price: $4,500** (negotiable)
+**Price: $19,000 (negotiable)
 
 
 ## 🚀 Quick Start
