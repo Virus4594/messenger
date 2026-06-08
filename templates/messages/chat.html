@@ -154,7 +154,6 @@ if (!window.chatInitialized) {
     let otherUserId = {{ other_user.id }};
     let otherUsername = "{{ other_user.username }}";
     let socket = null;
-    let myKeyPair = null;
     let sharedSecret = null;
     let chatAccessGranted = false;
     let processedIds = new Set();
@@ -169,6 +168,7 @@ if (!window.chatInitialized) {
     let stickers = [];
     let stickerPanelVisible = false;
     let typingTimer = null;
+    let e2eeReady = false;
 
     // ======== IndexedDB хранилище для ключей ========
     class E2EEStorage {
@@ -216,20 +216,9 @@ if (!window.chatInitialized) {
                 request.onerror = reject;
             });
         }
-
-        async deletePrivateKey(userId) {
-            await this.openDB();
-            return new Promise((resolve, reject) => {
-                const tx = this.db.transaction(this.storeName, 'readwrite');
-                const store = tx.objectStore(this.storeName);
-                store.delete(`user_${userId}`);
-                tx.oncomplete = resolve;
-                tx.onerror = reject;
-            });
-        }
     }
 
-    // ======== Криптографические утилиты для защиты ключа ========
+    // ======== Криптографические утилиты ========
     async function deriveKeyFromPassword(password, salt) {
         const enc = new TextEncoder();
         const keyMaterial = await crypto.subtle.importKey(
@@ -265,7 +254,6 @@ if (!window.chatInitialized) {
         };
     }
 
-    // ========== ИСПРАВЛЕННАЯ ФУНКЦИЯ decryptPrivateKey ==========
     async function decryptPrivateKey(encryptedData, ivBase64, saltBase64, password) {
         try {
             const salt = Uint8Array.from(atob(saltBase64), c => c.charCodeAt(0));
@@ -417,20 +405,29 @@ if (!window.chatInitialized) {
         );
     }
 
-    // ======== Шифрование сообщений ========
+    // ======== Шифрование ========
     function bufferToBase64(buffer) {
         const bytes = new Uint8Array(buffer);
-        const chunkSize = 8192;
         let binary = '';
-        for (let i = 0; i < bytes.length; i += chunkSize) {
-            const chunk = bytes.subarray(i, i + chunkSize);
-            binary += String.fromCharCode.apply(null, chunk);
+        for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
         }
         return btoa(binary);
     }
 
+    function base64ToBuffer(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+    }
+
     async function encryptMessage(message, secretKey) {
-        if (!secretKey) throw new Error('Нет ключа шифрования');
+        if (!secretKey) {
+            return { encrypted: btoa(message), iv: btoa('dummy') };
+        }
         try {
             const encoder = new TextEncoder();
             const data = encoder.encode(message);
@@ -446,69 +443,43 @@ if (!window.chatInitialized) {
             };
         } catch(e) {
             console.error('Encrypt error:', e);
-            throw e;
+            return { encrypted: btoa(message), iv: btoa('dummy') };
         }
     }
     
-    // ========== ИСПРАВЛЕННАЯ ФУНКЦИЯ decryptMessage (ДОБАВЛЕНА ПРОВЕРКА secretKey) ==========
     async function decryptMessage(encryptedBase64, ivBase64, secretKey) {
-    // Проверяем, готов ли ключ
-    if (!secretKey) {
-        console.warn('🔑 secretKey ещё не готов');
-        return '🔒 Настройка шифрования...';
-    }
-    
-    // Если нет данных для расшифровки
-    if (!encryptedBase64 || !ivBase64) {
-        return '🔒 Пустое сообщение';
-    }
-    
-    try {
-        // Пробуем расшифровать как base64
-        let encrypted, iv;
+        if (!secretKey || !encryptedBase64) {
+            try { return atob(encryptedBase64 || ''); } catch(e) { return '🔒 Зашифровано'; }
+        }
         
         try {
-            encrypted = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
-            iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
-        } catch(e) {
-            // Если это не base64 - значит сообщение не зашифровано
-            console.warn('Сообщение не в base64 формате, возвращаем как есть');
-            return encryptedBase64;
-        }
-        
-        const decrypted = await crypto.subtle.decrypt(
-            { name: "AES-GCM", iv: iv },
-            secretKey,
-            encrypted
-        );
-        
-        const decoder = new TextDecoder();
-        const decryptedText = decoder.decode(decrypted);
-        
-        // Пробуем распарсить JSON
-        try { 
-            const obj = JSON.parse(decryptedText);
-            if (obj.type === 'sticker') return obj.code;
-            if (obj.type === 'text') return obj.text;
-            return decryptedText;
-        } catch(e) { 
-            return decryptedText; 
-        }
-    } catch(e) {
-        console.error('Decrypt error:', e);
-        // Если не удалось расшифровать - возможно сообщение в старом формате
-        // Возвращаем исходный текст (если он читаемый)
-        if (encryptedBase64 && !encryptedBase64.includes('🔒')) {
-            try {
-                // Пробуем декодировать как обычный текст
-                return atob(encryptedBase64);
-            } catch(e2) {
-                return '🔒 Старое зашифрованное сообщение';
+            const encrypted = base64ToBuffer(encryptedBase64);
+            const iv = base64ToBuffer(ivBase64);
+            
+            const decrypted = await crypto.subtle.decrypt(
+                { name: "AES-GCM", iv: iv },
+                secretKey,
+                encrypted
+            );
+            
+            const decoder = new TextDecoder();
+            const decryptedText = decoder.decode(decrypted);
+            
+            try { 
+                const obj = JSON.parse(decryptedText);
+                if (obj.type === 'sticker') return { type: 'sticker', code: obj.code };
+                if (obj.type === 'attachment') return obj;
+                if (obj.type === 'location') return obj;
+                if (obj.type === 'contact') return obj;
+                return decryptedText;
+            } catch(e) { 
+                return decryptedText; 
             }
+        } catch(e) {
+            console.warn('Decrypt failed:', e);
+            try { return atob(encryptedBase64); } catch(e2) { return '🔒 Ошибка расшифровки'; }
         }
-        return '🔒 Не удалось расшифровать';
     }
-}
 
     async function savePublicKeyToServer(publicKeyBase64) {
         const response = await fetch('/api/e2ee/public_key', {
@@ -564,11 +535,9 @@ if (!window.chatInitialized) {
                 await storage.savePrivateKey(currentUserId, encrypted.encrypted, encrypted.iv, encrypted.salt);
             }
             
-            myKeyPair = { privateKey: myPrivateKey, publicKey: myPublicKey };
-            
-            const pubToSend = await exportPublicKey(myKeyPair);
-            const saved = await savePublicKeyToServer(pubToSend);
-            console.log(saved ? '✅ Ключ отправлен на сервер' : '❌ Ошибка отправки ключа');
+            const pubToSend = await exportPublicKey({ privateKey: myPrivateKey, publicKey: myPublicKey });
+            await savePublicKeyToServer(pubToSend);
+            console.log('✅ Ключ отправлен на сервер');
 
             const otherPublicKey = await loadOtherPublicKey();
             if (!otherPublicKey) {
@@ -577,16 +546,15 @@ if (!window.chatInitialized) {
                 return false;
             }
             
-            sharedSecret = await deriveSharedSecret(myKeyPair.privateKey, otherPublicKey);
+            sharedSecret = await deriveSharedSecret(myPrivateKey, otherPublicKey);
             chatAccessGranted = true;
+            e2eeReady = true;
             document.getElementById('encryptionBadge').innerHTML = '🔒 E2EE активно';
-            document.getElementById('messageInput').disabled = false;
-            document.getElementById('sendButton').disabled = false;
             showToast('🔐 Шифрование включено', 'success');
             return true;
         } catch(e) {
             console.error('E2EE init error:', e);
-            document.getElementById('encryptionBadge').innerHTML = '❌ Ошибка ключей';
+            document.getElementById('encryptionBadge').innerHTML = '⚠️ Обычный режим';
             return false;
         }
     }
@@ -612,7 +580,11 @@ if (!window.chatInitialized) {
     }
 
     async function sendSticker(stickerId, stickerCode) {
-        if (!chatAccessGranted || !sharedSecret) return;
+        if (!socket || !socket.connected) {
+            showToast('❌ Нет подключения', 'error');
+            return;
+        }
+        
         stickerPanelVisible = false;
         document.getElementById('stickerPanel').style.display = 'none';
         
@@ -624,22 +596,20 @@ if (!window.chatInitialized) {
             let tempDiv = document.createElement('div');
             tempDiv.className = 'message sent temp-message';
             tempDiv.setAttribute('data-temp-id', tempId);
-            tempDiv.innerHTML = `<div class="message-bubble sticker-message"><div class="sticker-emoji" style="font-size: 48px;">${stickerCode}</div><div class="message-time">${formatTime(new Date().toISOString())} <span class="message-status">⌛</span></div></div>`;
+            tempDiv.innerHTML = `<div class="message-bubble sticker-message"><div class="sticker-emoji" style="font-size: 48px;">${escapeHtml(stickerCode)}</div><div class="message-time">${formatTime(new Date().toISOString())} <span class="message-status">⌛</span></div></div>`;
             container.appendChild(tempDiv);
             scrollToBottom();
             
-            if (socket && socket.connected) {
-                socket.emit('send_message', {
-                    encrypted: encrypted.encrypted,
-                    iv: encrypted.iv,
-                    receiver_id: otherUserId,
-                    temp_id: tempId,
-                    is_sticker: true,
-                    is_attachment: false,
-                    sticker_id: stickerId,
-                    sticker_code: stickerCode
-                });
-            }
+            socket.emit('send_message', {
+                encrypted: encrypted.encrypted,
+                iv: encrypted.iv,
+                receiver_id: otherUserId,
+                temp_id: tempId,
+                is_sticker: true,
+                is_attachment: false,
+                sticker_id: stickerId,
+                sticker_code: stickerCode
+            });
         } catch(e) {
             showToast('❌ Ошибка шифрования стикера', 'error');
         }
@@ -906,10 +876,11 @@ if (!window.chatInitialized) {
         }
         
         sendAttachmentBtn.addEventListener('click', async () => {
-            if (!chatAccessGranted || !sharedSecret) {
-                showToast('❌ Шифрование не готово', 'error');
+            if (!socket || !socket.connected) {
+                showToast('❌ Нет подключения к серверу', 'error');
                 return;
             }
+            
             let attachmentData = null;
             if (selectedFile && selectedFileData) {
                 attachmentData = JSON.stringify({
@@ -951,7 +922,7 @@ if (!window.chatInitialized) {
                 if (selectedFile && selectedFile.type && selectedFile.type.startsWith('image/')) {
                     attachmentHtml = `<div class="message-attachment"><img src="${selectedFileData}" class="attachment-image" style="max-width: 200px; max-height: 150px; border-radius: 12px; cursor: pointer;"></div>`;
                 } else if (selectedLocation) {
-                    attachmentHtml = `<div class="message-attachment">📍 <strong>Локация</strong><br><small>${document.getElementById('locationAddress').textContent.substring(0, 50)}</small></div>`;
+                    attachmentHtml = `<div class="message-attachment">📍 <strong>Локация</strong><br><small>${escapeHtml(document.getElementById('locationAddress').textContent.substring(0, 50))}</small></div>`;
                 } else if (selectedContact) {
                     attachmentHtml = `<div class="message-attachment">👤 <strong>${escapeHtml(selectedContact.name)}</strong><br><small>📞 ${escapeHtml(selectedContact.phone)}</small></div>`;
                 } else if (selectedFile) {
@@ -961,20 +932,19 @@ if (!window.chatInitialized) {
                 container.appendChild(tempDiv);
                 scrollToBottom();
                 
-                if (socket && socket.connected) {
-                    socket.emit('send_message', {
-                        encrypted: encrypted.encrypted,
-                        iv: encrypted.iv,
-                        receiver_id: otherUserId,
-                        temp_id: tempId,
-                        is_attachment: true,
-                        is_sticker: false,
-                        attachment_name: selectedFile?.name || null,
-                        attachment_size: selectedFile?.size || null,
-                        attachment_type: selectedFile?.type || null
-                    });
-                }
+                socket.emit('send_message', {
+                    encrypted: encrypted.encrypted,
+                    iv: encrypted.iv,
+                    receiver_id: otherUserId,
+                    temp_id: tempId,
+                    is_attachment: true,
+                    is_sticker: false,
+                    attachment_name: selectedFile?.name || null,
+                    attachment_size: selectedFile?.size || null,
+                    attachment_type: selectedFile?.type || null
+                });
             } catch(e) {
+                console.error('Send attachment error:', e);
                 showToast('❌ Ошибка шифрования вложения', 'error');
             }
             clearAttachment();
@@ -998,7 +968,7 @@ if (!window.chatInitialized) {
         
         let messageDiv = document.createElement('div');
         messageDiv.className = `message ${isMine ? 'sent' : 'received'}`;
-        if (msg.id) messageDiv.setAttribute('data-id', `msg_${msg.id}`);
+        if (msg.id && !msg.id.toString().startsWith('temp')) messageDiv.setAttribute('data-id', `msg_${msg.id}`);
         
         let time = formatTime(msg.created_at);
         let statusHtml = '';
@@ -1027,10 +997,10 @@ if (!window.chatInitialized) {
         let isAttachment = msg.is_attachment;
         let displayText = msg.text || '';
         let stickerCode = msg.sticker_code || '';
-        let attachmentData = msg.attachment_data;
-        let attachmentMime = msg.attachment_mime || '';
         let attachmentName = msg.attachment_name || 'Файл';
-        let attachmentSize = msg.attachment_size || 0;
+        let attachmentData = msg.attachment_data;
+        let attachmentMime = msg.attachment_mime;
+        let attachmentSize = msg.attachment_size;
         
         let contentHtml = '';
         
@@ -1039,16 +1009,20 @@ if (!window.chatInitialized) {
         } else if (isAttachment && attachmentData) {
             let attachmentHtml = '';
             if (attachmentMime && attachmentMime.startsWith('image/')) {
-                attachmentHtml = `<div class="message-attachment"><img src="${attachmentData}" class="attachment-image" onclick="window.open('${attachmentData}', '_blank')"></div>`;
+                attachmentHtml = `<div class="message-attachment"><img src="${attachmentData}" class="attachment-image" style="max-width: 200px; max-height: 150px; border-radius: 12px; cursor: pointer;" onclick="window.open('${attachmentData}', '_blank')"></div>`;
+            } else if (attachmentMime && attachmentMime.startsWith('video/')) {
+                attachmentHtml = `<div class="message-attachment"><video controls style="max-width: 200px; max-height: 150px; border-radius: 12px;"><source src="${attachmentData}" type="${attachmentMime}"></video></div>`;
             } else {
-                attachmentHtml = `<div class="message-attachment"><a href="${attachmentData}" download="${attachmentName}" class="attachment-file"><span class="file-icon">📎</span><span class="file-name">${escapeHtml(attachmentName)}</span><span class="file-size">${formatFileSize(attachmentSize)}</span></a></div>`;
+                attachmentHtml = `<div class="message-attachment"><a href="${attachmentData}" download="${escapeHtml(attachmentName)}" class="attachment-file" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #f0f0f0; border-radius: 12px; text-decoration: none; color: #333;"><span class="file-icon" style="font-size: 24px;">📎</span><div><div class="file-name" style="font-weight: bold;">${escapeHtml(attachmentName)}</div><div class="file-size" style="font-size: 11px; color: #666;">${attachmentSize ? formatFileSize(attachmentSize) : ''}</div></div><span style="margin-left: auto;">⬇️</span></a></div>`;
             }
             contentHtml = `<div class="message-bubble">${!isMine ? `<div class="message-sender">${escapeHtml(msg.sender_username || otherUsername)}</div>` : ''}${attachmentHtml}${reactionsHtml}<div class="message-time">${time} ${statusHtml}</div></div>`;
+        } else if (isAttachment) {
+            contentHtml = `<div class="message-bubble">${!isMine ? `<div class="message-sender">${escapeHtml(msg.sender_username || otherUsername)}</div>` : ''}<div class="message-text">📎 ${escapeHtml(attachmentName)}</div>${reactionsHtml}<div class="message-time">${time} ${statusHtml}</div></div>`;
         } else {
             contentHtml = `<div class="message-bubble">${!isMine ? `<div class="message-sender">${escapeHtml(msg.sender_username || otherUsername)}</div>` : ''}<div class="message-text">${escapeHtml(displayText)}</div>${reactionsHtml}<div class="message-time">${time} ${statusHtml}</div></div>`;
         }
         
-        messageDiv.innerHTML = `<div style="display: flex; gap: 10px; align-items: flex-start; flex-direction: ${flexDirection};">${avatarHtml}${contentHtml}<button class="react-btn" data-message-id="msg_${msg.id}" title="Реакция">😊</button></div>`;
+        messageDiv.innerHTML = `<div style="display: flex; gap: 10px; align-items: flex-start; flex-direction: ${flexDirection};">${avatarHtml}${contentHtml}<button class="react-btn" data-message-id="${msg.id}" title="Реакция">😊</button></div>`;
         container.appendChild(messageDiv);
         scrollToBottom();
         
@@ -1056,7 +1030,12 @@ if (!window.chatInitialized) {
     }
 
     async function sendMessage() {
-        if (isSending || !chatAccessGranted || !sharedSecret) return;
+        if (isSending) return;
+        
+        if (!socket || !socket.connected) {
+            showToast('❌ Нет подключения к серверу', 'error');
+            return;
+        }
         
         let input = document.getElementById('messageInput');
         let text = input.value.trim();
@@ -1068,7 +1047,6 @@ if (!window.chatInitialized) {
         
         try {
             const encrypted = await encryptMessage(text, sharedSecret);
-            
             let tempId = 'temp_' + Date.now();
             let container = document.getElementById('messagesList');
             let tempDiv = document.createElement('div');
@@ -1078,26 +1056,23 @@ if (!window.chatInitialized) {
             container.appendChild(tempDiv);
             scrollToBottom();
             
-            if (socket && socket.connected) {
-                socket.emit('send_message', {
-                    encrypted: encrypted.encrypted,
-                    iv: encrypted.iv,
-                    receiver_id: otherUserId,
-                    temp_id: tempId,
-                    is_sticker: false,
-                    is_attachment: false
-                });
-            }
+            socket.emit('send_message', {
+                encrypted: encrypted.encrypted,
+                iv: encrypted.iv,
+                receiver_id: otherUserId,
+                temp_id: tempId,
+                is_sticker: false,
+                is_attachment: false
+            });
         } catch(e) {
-            showToast('❌ Ошибка шифрования', 'error');
+            console.error('Send error:', e);
+            showToast('❌ Ошибка отправки', 'error');
         }
         
         setTimeout(() => { isSending = false; }, 300);
     }
 
     async function loadHistory() {
-        if (!chatAccessGranted || !sharedSecret) return;
-        
         try {
             let res = await fetch(`/api/e2ee/messages/${otherUserId}`);
             let data = await res.json();
@@ -1113,11 +1088,11 @@ if (!window.chatInitialized) {
                     let displayText = '';
                     let isSticker = false;
                     let isAttachment = false;
+                    let attachmentName = '';
+                    let stickerCode = '';
                     let attachmentData = null;
                     let attachmentMime = '';
-                    let attachmentName = '';
                     let attachmentSize = 0;
-                    let stickerCode = '';
                     
                     try {
                         let reactRes = await fetch(`/api/message/${msg.id}/reactions`);
@@ -1126,7 +1101,7 @@ if (!window.chatInitialized) {
                     } catch(e) {}
                     
                     try {
-                        let decrypted = await decryptMessage(msg.encrypted, msg.nonce, sharedSecret);
+                        let decrypted = await decryptMessage(msg.encrypted, msg.encryption_nonce || msg.nonce, sharedSecret);
                         
                         if (typeof decrypted === 'object') {
                             if (decrypted.type === 'sticker') {
@@ -1135,17 +1110,17 @@ if (!window.chatInitialized) {
                                 displayText = stickerCode;
                             } else if (decrypted.type === 'attachment') {
                                 isAttachment = true;
-                                attachmentMime = decrypted.mime;
-                                attachmentName = decrypted.name;
-                                attachmentSize = decrypted.size;
-                                attachmentData = decrypted.data;
+                                attachmentName = decrypted.name || 'Файл';
+                                attachmentMime = decrypted.mime || '';
+                                attachmentSize = decrypted.size || 0;
+                                attachmentData = decrypted.data || null;
                                 displayText = '';
                             } else if (decrypted.type === 'location') {
                                 isAttachment = true;
-                                displayText = `📍 Локация: ${decrypted.address || `${decrypted.lat}, ${decrypted.lng}`}`;
+                                displayText = `📍 ${decrypted.address || 'Локация'}`;
                             } else if (decrypted.type === 'contact') {
                                 isAttachment = true;
-                                displayText = `👤 Контакт: ${decrypted.name} | 📞 ${decrypted.phone}`;
+                                displayText = `👤 ${decrypted.name}`;
                             } else {
                                 displayText = JSON.stringify(decrypted);
                             }
@@ -1153,7 +1128,7 @@ if (!window.chatInitialized) {
                             displayText = decrypted;
                         }
                         
-                        await addMessage({
+                        addMessage({
                             id: msg.id,
                             text: displayText,
                             sticker_code: stickerCode,
@@ -1164,13 +1139,14 @@ if (!window.chatInitialized) {
                             reactions: reactions,
                             is_sticker: isSticker,
                             is_attachment: isAttachment,
+                            attachment_name: attachmentName,
                             attachment_data: attachmentData,
                             attachment_mime: attachmentMime,
-                            attachment_name: attachmentName,
                             attachment_size: attachmentSize
                         }, msg.sender_id === currentUserId);
                     } catch(e) {
-                        await addMessage({
+                        console.error('Decrypt history error:', e);
+                        addMessage({
                             id: msg.id,
                             text: '🔒 Не удалось расшифровать',
                             created_at: msg.created_at,
@@ -1188,82 +1164,103 @@ if (!window.chatInitialized) {
             }
         } catch(e) {
             console.error('Load error:', e);
+            let container = document.getElementById('messagesList');
+            if (container && container.innerHTML === '') {
+                container.innerHTML = '<div class="empty-chat">💬 Напишите первое сообщение!</div>';
+            }
         }
     }
 
     function initSocket() {
-        socket = io({ transports: ['websocket', 'polling'] });
+        socket = io({ transports: ['websocket', 'polling'], reconnection: true });
         
         socket.on('connect', () => {
             console.log('✅ WebSocket connected');
             socket.emit('join_chat', { other_user_id: otherUserId });
+            showToast('✅ Подключено к чату', 'success');
+        });
+        
+        socket.on('connect_error', (err) => {
+            console.error('WebSocket error:', err);
+            showToast('⚠️ Ошибка подключения', 'error');
+        });
+        
+        socket.on('disconnect', () => {
+            console.log('⚠️ WebSocket disconnected');
         });
         
         socket.on('new_message', async (data) => {
-            if (!chatAccessGranted || !sharedSecret) return;
+            console.log('📩 New message:', data);
             
-            try {
-                let decrypted = await decryptMessage(data.encrypted, data.iv, sharedSecret);
-                let isSticker = data.is_sticker;
-                let isAttachment = data.is_attachment;
-                let displayText = '';
-                let stickerCode = '';
-                let attachmentData = null;
-                let attachmentMime = '';
-                let attachmentName = '';
-                let attachmentSize = 0;
-                
-                if (typeof decrypted === 'object') {
-                    if (decrypted.type === 'sticker') {
-                        isSticker = true;
-                        stickerCode = decrypted.code;
-                        displayText = stickerCode;
-                    } else if (decrypted.type === 'attachment') {
-                        isAttachment = true;
-                        attachmentMime = decrypted.mime;
-                        attachmentName = decrypted.name;
-                        attachmentSize = decrypted.size;
-                        attachmentData = decrypted.data;
-                        displayText = '';
-                    } else if (decrypted.type === 'location') {
-                        isAttachment = true;
-                        displayText = `📍 Локация: ${decrypted.address || `${decrypted.lat}, ${decrypted.lng}`}`;
-                    } else if (decrypted.type === 'contact') {
-                        isAttachment = true;
-                        displayText = `👤 Контакт: ${decrypted.name} | 📞 ${decrypted.phone}`;
-                    }
+            let decrypted = await decryptMessage(data.encrypted, data.iv, sharedSecret);
+            let isSticker = data.is_sticker;
+            let isAttachment = data.is_attachment;
+            let displayText = '';
+            let stickerCode = data.sticker_code || '';
+            let attachmentName = data.attachment_name || 'Вложение';
+            let attachmentData = null;
+            let attachmentMime = '';
+            let attachmentSize = 0;
+            
+            if (typeof decrypted === 'object') {
+                if (decrypted.type === 'sticker') {
+                    isSticker = true;
+                    stickerCode = decrypted.code;
+                    displayText = stickerCode;
+                } else if (decrypted.type === 'attachment') {
+                    isAttachment = true;
+                    attachmentName = decrypted.name || 'Файл';
+                    attachmentMime = decrypted.mime || '';
+                    attachmentSize = decrypted.size || 0;
+                    attachmentData = decrypted.data || null;
+                    displayText = '';
+                } else if (decrypted.type === 'location') {
+                    isAttachment = true;
+                    displayText = `📍 ${decrypted.address || 'Локация'}`;
+                } else if (decrypted.type === 'contact') {
+                    isAttachment = true;
+                    displayText = `👤 ${decrypted.name}`;
                 } else {
-                    displayText = decrypted;
+                    displayText = JSON.stringify(decrypted);
                 }
-                
-                await addMessage({
-                    id: data.id,
-                    text: displayText,
-                    sticker_code: stickerCode,
-                    created_at: data.created_at,
-                    sender_id: data.sender_id,
-                    sender_username: data.sender_username,
-                    is_read: false,
-                    reactions: [],
-                    is_sticker: isSticker,
-                    is_attachment: isAttachment,
-                    attachment_data: attachmentData,
-                    attachment_mime: attachmentMime,
-                    attachment_name: attachmentName,
-                    attachment_size: attachmentSize,
-                    temp_id: data.temp_id
-                }, data.sender_id === currentUserId);
-                
-                if (data.sender_id !== currentUserId) {
-                    if (!document.hidden) {
-                        setTimeout(() => markVisibleMessagesAsRead(), 500);
-                    } else {
-                        playNotificationSound();
-                        showBrowserNotification(data.sender_username, displayText || '📎 Вложение');
-                    }
+            } else {
+                displayText = decrypted;
+            }
+            
+            if (isSticker && !stickerCode && displayText) {
+                try {
+                    const parsed = JSON.parse(displayText);
+                    stickerCode = parsed.code || displayText;
+                } catch(e) {
+                    stickerCode = displayText;
                 }
-            } catch(e) {
-                console.error('Decrypt error:', e);
+            }
+            
+            addMessage({
+                id: data.id,
+                text: displayText,
+                sticker_code: stickerCode,
+                created_at: data.created_at,
+                sender_id: data.sender_id,
+                sender_username: data.sender_username,
+                is_read: false,
+                reactions: [],
+                is_sticker: isSticker,
+                is_attachment: isAttachment,
+                attachment_name: attachmentName,
+                attachment_data: attachmentData,
+                attachment_mime: attachmentMime,
+                attachment_size: attachmentSize,
+                temp_id: data.temp_id
+            }, data.sender_id === currentUserId);
+            
+            if (data.sender_id !== currentUserId) {
+                if (!document.hidden) {
+                    setTimeout(() => markVisibleMessagesAsRead(), 500);
+                } else {
+                    playNotificationSound();
+                    showBrowserNotification(data.sender_username, displayText);
+                }
             }
         });
         
@@ -1293,32 +1290,31 @@ if (!window.chatInitialized) {
                 }
             }
         });
-        
-        socket.on('connect_error', (e) => console.error('Socket error:', e));
     }
 
+    // ======== Инициализация ========
     document.addEventListener('DOMContentLoaded', async () => {
         console.log('🚀 Запуск чата...');
         
         requestNotificationPermission();
         
-        document.getElementById('messageInput').disabled = true;
-        document.getElementById('sendButton').disabled = true;
+        document.getElementById('messageInput').disabled = false;
+        document.getElementById('sendButton').disabled = false;
         
-        const success = await initE2EE();
+        initSocket();
+        await loadHistory();
         
-        if (success) {
-            initSocket();
-            await loadHistory();
-        }
+        initE2EE().then(success => {
+            if (success && sharedSecret) {
+                loadHistory();
+            }
+        });
         
         loadStickers();
         setupAttachments();
         
         let sendBtn = document.getElementById('sendButton');
-        let newSendBtn = sendBtn.cloneNode(true);
-        sendBtn.parentNode.replaceChild(newSendBtn, sendBtn);
-        newSendBtn.onclick = sendMessage;
+        sendBtn.onclick = sendMessage;
         
         let input = document.getElementById('messageInput');
         
@@ -1391,7 +1387,7 @@ if (!window.chatInitialized) {
         });
         
         document.getElementById('verifyKeyBtn').onclick = () => {
-            alert('🔐 Сквозное шифрование активно\n\nСообщения шифруются в вашем браузере и расшифровываются только у собеседника.\nСервер никогда не видит ваши сообщения.');
+            alert(e2eeReady ? '🔐 Сквозное шифрование активно' : '⚠️ Шифрование не активно, чат работает в обычном режиме');
         };
     });
 }

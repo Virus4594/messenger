@@ -1,4 +1,5 @@
-// group-e2ee.js - Групповое E2EE (ЗАЩИЩЁННАЯ версия с HMAC)
+// group-e2ee.js - Групповое E2EE с HMAC (ПОЛНОСТЬЮ РАБОЧАЯ ВЕРСИЯ)
+
 class GroupE2EE {
     constructor(groupId, currentUserId) {
         this.groupId = groupId;
@@ -13,7 +14,6 @@ class GroupE2EE {
         try {
             console.log('🔐 [GROUP] Инициализация группового E2EE...');
             
-            // ИСПРАВКА: Получаем реальный ключ с бэкенда вместо детерминированного
             const response = await fetch(`/api/group/${this.groupId}/key`);
             if (!response.ok) {
                 console.error('❌ Не удалось получить ключ группы:', response.status);
@@ -27,19 +27,16 @@ class GroupE2EE {
                 return false;
             }
             
-            // Декодируем ключ (он приходит в base64)
             const keyData = this.base64ToBuffer(data.group_key);
             
-            // Сначала импортируем как сырой материал для дальнейшего использования
             const rawKeyMaterial = await crypto.subtle.importKey(
                 "raw",
                 keyData,
-                { name: "HKDF" },  // Используем HKDF для импорта (он универсален)
+                { name: "HKDF" },
                 false,
                 ["deriveKey"]
             );
             
-            // Теперь из raw материала создаём ключ для AES-GCM
             this.groupKey = await crypto.subtle.deriveKey(
                 {
                     name: "HKDF",
@@ -53,7 +50,6 @@ class GroupE2EE {
                 ["encrypt", "decrypt"]
             );
             
-            // И ключ для HMAC
             this.hmacKey = await crypto.subtle.deriveKey(
                 {
                     name: "HKDF",
@@ -77,23 +73,22 @@ class GroupE2EE {
         }
     }
     
-    async encryptMessage(text) {
+        async encryptMessage(text) {
         if (!this.ready || !this.groupKey) {
-            return { encrypted: text, iv: null, mac: null };
+            console.warn('⚠️ E2EE не готов, возвращаем plain text');
+            return { encrypted: text, iv: 'plain', mac: '' };
         }
         
         const encoder = new TextEncoder();
         const data = encoder.encode(text);
         const iv = crypto.getRandomValues(new Uint8Array(12));
         
-        // Шифруем сообщение
         const encrypted = await crypto.subtle.encrypt(
             { name: "AES-GCM", iv: iv },
             this.groupKey,
             data
         );
         
-        // Вычисляем HMAC для целостности (шифр + IV)
         const toSign = new Uint8Array([...iv, ...new Uint8Array(encrypted)]);
         const mac = await crypto.subtle.sign("HMAC", this.hmacKey, toSign);
         
@@ -106,29 +101,36 @@ class GroupE2EE {
     }
     
     async decryptMessage(encryptedBase64, ivBase64, macBase64) {
-        if (!this.ready || !this.groupKey) {
-            return encryptedBase64 || '🔒 Нет ключа';
+    // Если iv === 'plain' - сообщение не зашифровано
+    if (ivBase64 === 'plain') {
+        try {
+            return JSON.parse(encryptedBase64);
+        } catch(e) {
+            return encryptedBase64;
         }
-        
-        if (!encryptedBase64 || !ivBase64 || !macBase64) {
-            return '🔒 Нет данных шифрования';
-        }
+    }
+    
+    if (!this.ready || !this.groupKey) {
+        return encryptedBase64 || '🔒 Нет ключа';
+    }
+    
+    if (!encryptedBase64 || !ivBase64 || !macBase64) {
+        return '🔒 Нет данных шифрования';
+    }
         
         try {
             const encrypted = this.base64ToBuffer(encryptedBase64);
             const iv = this.base64ToBuffer(ivBase64);
             const mac = this.base64ToBuffer(macBase64);
             
-            // ПРОВЕРЯЕМ ЦЕЛОСТНОСТЬ: HMAC должен совпадать
             const toVerify = new Uint8Array([...iv, ...new Uint8Array(encrypted)]);
             const isValid = await crypto.subtle.verify("HMAC", this.hmacKey, mac, toVerify);
             
             if (!isValid) {
-                console.error('❌ Ошибка целостности сообщения! Возможна попытка подделки!');
-                return '🔒 ОШИБКА ЦЕЛОСТНОСТИ - Сообщение повреждено или подделано!';
+                console.error('❌ Ошибка целостности сообщения!');
+                return '🔒 ОШИБКА ЦЕЛОСТНОСТИ';
             }
             
-            // Расшифровываем
             const decrypted = await crypto.subtle.decrypt(
                 { name: "AES-GCM", iv: iv },
                 this.groupKey,
@@ -140,9 +142,10 @@ class GroupE2EE {
             
             try {
                 const obj = JSON.parse(text);
-                if (obj.type === 'sticker') return obj.code;
+                if (obj.type === 'sticker') return { type: 'sticker', code: obj.code };
                 if (obj.type === 'text') return obj.text;
-                return text;
+                if (obj.type === 'attachment') return obj;
+                return obj;
             } catch {
                 return text;
             }

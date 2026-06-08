@@ -254,13 +254,12 @@ class GroupMessage(db.Model):
     encryption_nonce = db.Column(db.String(100), nullable=True)
     message_mac = db.Column(db.String(200), nullable=True)  # ДОБАВЛЕНО: MAC для целостности
     
-    sticker_id = db.Column(db.Integer, nullable=True)
-    sticker_code = db.Column(db.String(10), nullable=True)
+    is_sticker = db.Column(db.Boolean, default=False)
+    sticker_code = db.Column(db.String(50), nullable=True)
     is_attachment = db.Column(db.Boolean, default=False)
-    attachment = db.Column(db.String(500), nullable=True)
-    attachment_type = db.Column(db.String(50), nullable=True)
-    attachment_name = db.Column(db.String(200), nullable=True)
+    attachment_name = db.Column(db.String(255), nullable=True)
     attachment_size = db.Column(db.Integer, nullable=True)
+    attachment_type = db.Column(db.String(100), nullable=True)
     
     created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
     read_by = db.Column(db.Text, default='[]')

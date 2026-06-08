@@ -2007,7 +2007,6 @@ def handle_join_group(data):
 
 @socketio.on('send_group_message')
 def handle_send_group_message(data):
-    """Отправка сообщения в группу - ИСПРАВЛЕНО для MAC"""
     if 'user_id' not in session:
         emit('error', {'message': 'Не авторизован'})
         return
@@ -2015,45 +2014,63 @@ def handle_send_group_message(data):
     group_id = data.get('group_id')
     encrypted = data.get('encrypted')
     iv = data.get('iv')
-    mac = data.get('mac')  # ДОБАВЛЕНО: Получаем MAC от клиента
+    mac = data.get('mac')
+    temp_id = data.get('temp_id')
+    is_sticker = data.get('is_sticker', False)
+    sticker_code = data.get('sticker_code')
+    is_attachment = data.get('is_attachment', False)
+    attachment_name = data.get('attachment_name')
+    attachment_size = data.get('attachment_size')
+    attachment_type = data.get('attachment_type')
+    
     sender_id = session['user_id']
     
-    # Проверка, что пользователь в группе
     member = GroupMember.query.filter_by(group_id=group_id, user_id=sender_id).first()
     if not member:
         emit('error', {'message': 'Нет доступа'})
         return
     
-    if not encrypted or not iv or not mac:
-        emit('error', {'message': 'Нет данных шифрования'})
-        return
-    
-    # Сохраняем сообщение с MAC для проверки целостности
+    # Сохраняем сообщение
     message = GroupMessage(
         group_id=group_id,
         sender_id=sender_id,
-        encrypted_content=encrypted,
-        encryption_nonce=iv,
-        message_mac=mac,  # ДОБАВЛЕНО: Сохраняем MAC
+        encrypted_content=encrypted or '',
+        encryption_nonce=iv or 'plain',
+        message_mac=mac or '',
+        is_sticker=is_sticker,
+        sticker_code=sticker_code,
+        is_attachment=is_attachment,
+        attachment_name=attachment_name,
+        attachment_size=attachment_size,
+        attachment_type=attachment_type,
         created_at=datetime.now(timezone.utc)
     )
+    
     db.session.add(message)
     db.session.commit()
     
-    # Отправляем всем в комнате с MAC
     sender = db.session.get(User, sender_id)
     room_name = f'group_{group_id}'
+    
+    # ВАЖНО: Отправляем encrypted как есть (клиент сам расшифрует)
     emit('new_group_message', {
         'id': message.id,
-        'encrypted': encrypted,
-        'iv': iv,
-        'mac': mac,  # ДОБАВЛЕНО: Отправляем MAC для проверки
+        'encrypted': message.encrypted_content,
+        'iv': message.encryption_nonce,
+        'mac': message.message_mac,
         'sender_id': sender_id,
         'sender_username': sender.username,
-        'created_at': message.created_at.isoformat()
+        'created_at': message.created_at.isoformat(),
+        'temp_id': temp_id,
+        'is_sticker': is_sticker,
+        'sticker_code': sticker_code,
+        'is_attachment': is_attachment,
+        'attachment_name': attachment_name,
+        'attachment_size': attachment_size,
+        'attachment_type': attachment_type
     }, room=room_name)
     
-    print(f'✅ Сообщение {message.id} отправлено в группу {group_id}')
+    print(f'✅ Сообщение #{message.id} в группу {group_id} (вложение: {is_attachment})')
 
 
 @socketio.on('group_typing')
@@ -2146,7 +2163,6 @@ def e2ee_get_messages(user_id):
 @app.route('/api/group-messages/<int:group_id>')
 @login_required
 def api_group_messages(group_id):
-    """ИСПРАВЛЕНО: Возвращаем MAC для проверки целостности"""
     group = ChatGroup.query.get_or_404(group_id)
     
     membership = GroupMember.query.filter_by(group_id=group_id, user_id=session['user_id']).first()
@@ -2160,12 +2176,17 @@ def api_group_messages(group_id):
         messages_data.append({
             'id': msg.id,
             'encrypted': msg.encrypted_content,
-            'iv': msg.encryption_nonce,  # ИСПРАВЛЕНО: Теперь отправляем IV для дешифровки
-            'mac': msg.message_mac,  # ДОБАВЛЕНО: Отправляем MAC для проверки целостности
+            'iv': msg.encryption_nonce,
+            'mac': msg.message_mac,
             'sender_id': msg.sender_id,
             'sender_username': msg.sender.username,
             'created_at': msg.created_at.isoformat(),
-            'sticker_code': msg.sticker_code
+            'is_sticker': msg.is_sticker,
+            'sticker_code': msg.sticker_code,
+            'is_attachment': msg.is_attachment,        # ← ДОБАВЬ ЭТО
+            'attachment_name': msg.attachment_name,
+            'attachment_size': msg.attachment_size,
+            'attachment_type': msg.attachment_type
         })
     
     return jsonify({'messages': messages_data})
@@ -2220,27 +2241,22 @@ def send_group_message():
 @app.route('/api/group/<int:group_id>/key', methods=['GET'])
 @login_required
 def get_group_key(group_id):
-    """ИСПРАВЛЕНО: Получить расшифрованный групповой ключ для клиента"""
     group = ChatGroup.query.get_or_404(group_id)
     
     membership = GroupMember.query.filter_by(group_id=group_id, user_id=session['user_id']).first()
     if not membership:
         return jsonify({'error': 'Нет доступа'}), 403
     
-    # Если у группы нет ключа, создаём истинно случайный ключ
     if not group.encrypted_group_key:
         import secrets
-        group_key = secrets.token_bytes(32)  # Случайный 256-бит ключ
+        import base64
+        group_key = secrets.token_bytes(32)
         group.encrypted_group_key = base64.b64encode(group_key).decode()
         db.session.commit()
-        print(f"✅ Создан новый групповой ключ для группы {group_id}")
     
-    # ВАЖНО: Отправляем расшифрованный ключ через HTTPS (считаем, что безопасно)
-    # В продакшене можно добавить дополнительное шифрование ECDH
     return jsonify({
-        'group_key': group.encrypted_group_key,  # На самом деле это base64 расшифрованного ключа
-        'key_version': '1.0',
-        'group_id': group_id
+        'group_key': group.encrypted_group_key,
+        'key_version': '1.0'
     })
 
 

@@ -1,16 +1,18 @@
-// groups.js - Полноценный групповой чат
+// groups-chat.js - Групповой чат (полностью как личка: файлы, фото, скачивание)
+
 let groupSocket = null;
 let groupE2EE = null;
 let groupId = null;
 let currentUserId = null;
-let currentUserRole = null;
+let currentUsername = null;
 let processedMessages = new Set();
+let pendingTempIds = new Set();
+let e2eeReadyPromise = null;
 
-// Инициализация при загрузке
 document.addEventListener('DOMContentLoaded', async () => {
     groupId = document.getElementById('groupId')?.value;
     currentUserId = document.getElementById('currentUserId')?.value;
-    currentUserRole = document.getElementById('currentUserRole')?.value;
+    currentUsername = document.getElementById('currentUsername')?.value || 'Пользователь';
     
     if (!groupId) {
         console.error('❌ Нет ID группы');
@@ -19,74 +21,132 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     console.log('🚀 Запуск группового чата:', groupId);
     
-    // Инициализируем E2EE
-    groupE2EE = new GroupE2EE(groupId, currentUserId);
-    await groupE2EE.init();
+    if (typeof GroupE2EE !== 'undefined') {
+        groupE2EE = new GroupE2EE(groupId, currentUserId);
+        e2eeReadyPromise = groupE2EE.init();
+        await e2eeReadyPromise;
+        console.log('✅ E2EE инициализирован, ready:', groupE2EE.ready);
+    }
     
-    initGroupSocket();
-    await loadGroupMessages();
-    setupGroupEventListeners();
-    await loadGroupStickers();
+    initSocket();
+    await loadMessages();
+    initButtons();
+    loadStickers();
+    initAttachments();
     
-    // Проверяем доступные кнопки
-    console.log('🔍 Доступные кнопки:', {
-        addMemberBtn: !!document.getElementById('addMemberBtn'),
-        inviteBtn: !!document.getElementById('inviteBtn'),
-        membersBtn: !!document.getElementById('membersBtn')
-    });
+    console.log('✅ Групповой чат готов');
 });
 
-function initGroupSocket() {
-    groupSocket = io({ transports: ['websocket', 'polling'] });
+async function waitForE2EE() {
+    if (groupE2EE && groupE2EE.ready) return true;
+    if (e2eeReadyPromise) {
+        console.log('⏳ Ожидание E2EE...');
+        await e2eeReadyPromise;
+        return groupE2EE?.ready || false;
+    }
+    return false;
+}
+
+// ========== WEBSOCKET ==========
+function initSocket() {
+    groupSocket = io();
     
     groupSocket.on('connect', () => {
-        console.log('✅ WebSocket группы подключён');
+        console.log('✅ WebSocket подключён');
         groupSocket.emit('join_group', { group_id: parseInt(groupId) });
     });
     
     groupSocket.on('new_group_message', async (data) => {
+        console.log('📩 Получено:', data.id, 'is_attachment:', data.is_attachment);
+        
+        if (data.temp_id && pendingTempIds.has(data.temp_id)) {
+            const temp = document.querySelector(`[data-temp="${data.temp_id}"]`);
+            if (temp) temp.remove();
+            pendingTempIds.delete(data.temp_id);
+        }
+        
         if (processedMessages.has(data.id)) return;
+        if (document.querySelector(`[data-msg-id="${data.id}"]`)) return;
         processedMessages.add(data.id);
         
-        let displayText = data.encrypted || '📎';
+        let text = '';
+        let isSticker = data.is_sticker || false;
+        let stickerCode = data.sticker_code || '';
+        let isAttachment = data.is_attachment || false;
+        let attachmentName = data.attachment_name || '';
+        let attachmentData = null;
+        let attachmentMime = '';
+        let attachmentSize = data.attachment_size || 0;
         
-        // ИСПРАВКА: Проверяем целостность через HMAC перед дешифровкой
+        // Расшифровка
         if (groupE2EE && groupE2EE.ready && data.encrypted && data.iv && data.mac) {
-            displayText = await groupE2EE.decryptMessage(data.encrypted, data.iv, data.mac);
+            try {
+                const decrypted = await groupE2EE.decryptMessage(data.encrypted, data.iv, data.mac);
+                if (typeof decrypted === 'object') {
+                    if (decrypted.type === 'sticker') {
+                        isSticker = true;
+                        stickerCode = decrypted.code;
+                        text = stickerCode;
+                    } else if (decrypted.type === 'attachment') {
+                        isAttachment = true;
+                        attachmentData = decrypted.data;
+                        attachmentName = decrypted.name;
+                        attachmentMime = decrypted.mime;
+                        attachmentSize = decrypted.size;
+                        console.log('🔓 Вложение расшифровано:', attachmentName);
+                    } else if (decrypted.type === 'text') {
+                        text = decrypted.text || '';
+                    } else {
+                        text = decrypted.text || JSON.stringify(decrypted);
+                    }
+                } else {
+                    text = decrypted;
+                }
+            } catch(e) {
+                console.error('Decrypt error:', e);
+                text = '🔒 Зашифровано';
+            }
+        } else if (data.encrypted && data.iv === 'plain') {
+            try {
+                const parsed = JSON.parse(data.encrypted);
+                if (parsed.type === 'attachment') {
+                    isAttachment = true;
+                    attachmentData = parsed.data;
+                    attachmentName = parsed.name;
+                    attachmentMime = parsed.mime;
+                    attachmentSize = parsed.size;
+                } else {
+                    text = data.encrypted;
+                }
+            } catch(e) {
+                text = data.encrypted;
+            }
+        } else if (data.encrypted) {
+            text = data.encrypted;
         }
         
         addMessageToDOM({
             id: data.id,
-            text: displayText,
+            text: text,
             sender_id: data.sender_id,
             sender_username: data.sender_username,
             created_at: data.created_at,
-            is_mine: data.sender_id == currentUserId
+            is_sticker: isSticker,
+            sticker_code: stickerCode,
+            is_attachment: isAttachment,
+            attachment_name: attachmentName,
+            attachment_data: attachmentData,
+            attachment_mime: attachmentMime,
+            attachment_size: attachmentSize
         });
-        
-        if (data.sender_id != currentUserId && !document.hasFocus()) {
-            playNotificationSound();
-            showNotification(data.sender_username, displayText);
-        }
-    });
-    
-    groupSocket.on('group_typing', (data) => {
-        if (data.sender_id != currentUserId) {
-            const indicator = document.getElementById('groupTypingIndicator');
-            const usernameSpan = document.getElementById('groupTypingUsername');
-            if (indicator && usernameSpan) {
-                usernameSpan.textContent = data.sender_username;
-                indicator.style.display = 'flex';
-                setTimeout(() => indicator.style.display = 'none', 3000);
-            }
-        }
     });
 }
 
-async function loadGroupMessages() {
+// ========== ЗАГРУЗКА ИСТОРИИ ==========
+async function loadMessages() {
     try {
-        const response = await fetch(`/api/group-messages/${groupId}`);
-        const data = await response.json();
+        const res = await fetch(`/api/group-messages/${groupId}`);
+        const data = await res.json();
         
         const container = document.getElementById('groupMessagesList');
         if (!container) return;
@@ -96,24 +156,76 @@ async function loadGroupMessages() {
         
         if (data.messages && data.messages.length > 0) {
             for (const msg of data.messages) {
-                let displayText = msg.encrypted || '📎';
+                let text = '';
+                let isSticker = msg.is_sticker || false;
+                let stickerCode = msg.sticker_code || '';
+                let isAttachment = msg.is_attachment || false;
+                let attachmentName = msg.attachment_name || '';
+                let attachmentData = null;
+                let attachmentMime = '';
+                let attachmentSize = msg.attachment_size || 0;
                 
-                // ИСПРАВКА: Проверяем HMAC целостность при загрузке истории
                 if (groupE2EE && groupE2EE.ready && msg.encrypted && msg.iv && msg.mac) {
-                    displayText = await groupE2EE.decryptMessage(msg.encrypted, msg.iv, msg.mac);
+                    try {
+                        const decrypted = await groupE2EE.decryptMessage(msg.encrypted, msg.iv, msg.mac);
+                        if (typeof decrypted === 'object') {
+                            if (decrypted.type === 'sticker') {
+                                isSticker = true;
+                                stickerCode = decrypted.code;
+                                text = stickerCode;
+                            } else if (decrypted.type === 'attachment') {
+                                isAttachment = true;
+                                attachmentData = decrypted.data;
+                                attachmentName = decrypted.name;
+                                attachmentMime = decrypted.mime;
+                                attachmentSize = decrypted.size;
+                            } else if (decrypted.type === 'text') {
+                                text = decrypted.text || '';
+                            } else {
+                                text = decrypted.text || JSON.stringify(decrypted);
+                            }
+                        } else {
+                            text = decrypted;
+                        }
+                    } catch(e) {
+                        text = '🔒 Зашифровано';
+                    }
+                } else if (msg.encrypted && msg.iv === 'plain') {
+                    try {
+                        const parsed = JSON.parse(msg.encrypted);
+                        if (parsed.type === 'attachment') {
+                            isAttachment = true;
+                            attachmentData = parsed.data;
+                            attachmentName = parsed.name;
+                            attachmentMime = parsed.mime;
+                            attachmentSize = parsed.size;
+                        } else {
+                            text = msg.encrypted;
+                        }
+                    } catch(e) {
+                        text = msg.encrypted;
+                    }
+                } else if (msg.encrypted) {
+                    text = msg.encrypted;
                 }
                 
                 addMessageToDOM({
                     id: msg.id,
-                    text: displayText,
+                    text: text,
                     sender_id: msg.sender_id,
                     sender_username: msg.sender_username,
                     created_at: msg.created_at,
-                    is_mine: msg.sender_id == currentUserId
+                    is_sticker: isSticker,
+                    sticker_code: stickerCode,
+                    is_attachment: isAttachment,
+                    attachment_name: attachmentName,
+                    attachment_data: attachmentData,
+                    attachment_mime: attachmentMime,
+                    attachment_size: attachmentSize
                 });
             }
         } else {
-            container.innerHTML = '<div class="empty-chat">💬 Напишите первое сообщение в группе!</div>';
+            container.innerHTML = '<div class="empty">💬 Напишите первое сообщение!</div>';
         }
         
         scrollToBottom();
@@ -122,183 +234,379 @@ async function loadGroupMessages() {
     }
 }
 
+// ========== ОТОБРАЖЕНИЕ (как в личке) ==========
 function addMessageToDOM(msg) {
     const container = document.getElementById('groupMessagesList');
     if (!container) return;
     
-    const loader = container.querySelector('.loading-messages');
-    if (loader) loader.remove();
+    const empty = container.querySelector('.empty');
+    if (empty) empty.remove();
     
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `group-message ${msg.is_mine ? 'sent' : 'received'}`;
+    if (msg.id && !msg.id.toString().startsWith('temp')) {
+        if (container.querySelector(`[data-msg-id="${msg.id}"]`)) return;
+    }
     
-    const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const isMine = msg.sender_id == currentUserId;
+    const div = document.createElement('div');
+    div.className = `msg ${isMine ? 'sent' : 'received'}`;
+    div.setAttribute('data-msg-id', msg.id);
+    if (msg.temp_id) div.setAttribute('data-temp', msg.temp_id);
     
-    messageDiv.innerHTML = `
-        <div class="message-avatar">${(msg.sender_username || '?').charAt(0).toUpperCase()}</div>
-        <div class="message-bubble">
-            ${!msg.is_mine ? `<div class="message-sender">${escapeHtml(msg.sender_username)}</div>` : ''}
-            <div class="message-text">${escapeHtml(msg.text)}</div>
-            <div class="message-time">${time}</div>
-        </div>
-    `;
+    const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    const avatar = (msg.sender_username || '?').charAt(0).toUpperCase();
     
-    container.appendChild(messageDiv);
+    let content = '';
+    
+    if (msg.is_sticker) {
+        content = `<div class="bubble sticker-bubble"><span class="sticker-emoji" style="font-size: 48px;">${escapeHtml(msg.sticker_code || '😊')}</span><div class="time">${time}</div></div>`;
+    } 
+    else if (msg.is_attachment && msg.attachment_data) {
+        // Для изображений показываем превью + ссылка на скачивание
+        if (msg.attachment_mime && msg.attachment_mime.startsWith('image/')) {
+            content = `<div class="bubble">
+                <img src="${msg.attachment_data}" style="max-width: 200px; max-height: 150px; border-radius: 12px; cursor: pointer;" onclick="window.open(this.src)">
+                <div class="attachment-download" style="margin-top: 8px;">
+                    <a href="${msg.attachment_data}" download="${escapeHtml(msg.attachment_name)}" style="font-size: 12px; color: #667eea; text-decoration: none;">📥 Скачать ${escapeHtml(msg.attachment_name)}</a>
+                </div>
+                <div class="time">${time}</div>
+            </div>`;
+        } else {
+            // Обычные файлы
+            content = `<div class="bubble">
+                <a href="${msg.attachment_data}" download="${escapeHtml(msg.attachment_name)}" style="display: flex; align-items: center; gap: 8px; text-decoration: none; color: #667eea; padding: 8px 12px; background: #f0f0f0; border-radius: 12px;">
+                    <span style="font-size: 24px;">📎</span>
+                    <div>
+                        <div style="font-weight: bold;">${escapeHtml(msg.attachment_name)}</div>
+                        <div style="font-size: 10px; color: #666;">${formatFileSize(msg.attachment_size)}</div>
+                    </div>
+                    <span style="margin-left: auto;">⬇️</span>
+                </a>
+                <div class="time">${time}</div>
+            </div>`;
+        }
+    } 
+    else {
+        content = `<div class="bubble"><div class="text">${escapeHtml(msg.text)}</div><div class="time">${time}</div></div>`;
+    }
+    
+    div.innerHTML = `<div class="avatar">${avatar}</div>${content}`;
+    container.appendChild(div);
     scrollToBottom();
 }
 
-async function sendGroupMessage() {
+// ========== ОТПРАВКА ТЕКСТА ==========
+async function sendText() {
     const input = document.getElementById('groupMessageInput');
     const text = input.value.trim();
-    
     if (!text) return;
     
     input.value = '';
     input.style.height = 'auto';
+    
+    const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+    pendingTempIds.add(tempId);
+    
+    addMessageToDOM({
+        id: tempId,
+        temp_id: tempId,
+        text: text,
+        sender_id: currentUserId,
+        sender_username: currentUsername,
+        created_at: new Date().toISOString()
+    });
     
     let encrypted = text;
     let iv = null;
     let mac = null;
     
     if (groupE2EE && groupE2EE.ready) {
-        const enc = await groupE2EE.encryptMessage(JSON.stringify({ type: 'text', text: text }));
-        encrypted = enc.encrypted;
-        iv = enc.iv;
-        mac = enc.mac;  // ИСПРАВКА: Теперь отправляем HMAC для целостности
+        try {
+            const enc = await groupE2EE.encryptMessage(JSON.stringify({ type: 'text', text: text }));
+            encrypted = enc.encrypted;
+            iv = enc.iv;
+            mac = enc.mac;
+        } catch(e) {}
     }
     
-    if (groupSocket && groupSocket.connected) {
+    if (groupSocket?.connected) {
         groupSocket.emit('send_group_message', {
             group_id: parseInt(groupId),
             encrypted: encrypted,
             iv: iv,
-            mac: mac,  // ИСПРАВКА: Отправляем HMAC
-            temp_id: 'temp_' + Date.now()
+            mac: mac,
+            temp_id: tempId,
+            is_sticker: false,
+            is_attachment: false
         });
     }
 }
 
-async function sendGroupSticker(stickerId, stickerCode) {
+// ========== ОТПРАВКА СТИКЕРА ==========
+async function sendSticker(stickerId, stickerCode) {
+    const tempId = 'temp_sticker_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+    pendingTempIds.add(tempId);
+    
+    addMessageToDOM({
+        id: tempId,
+        temp_id: tempId,
+        text: stickerCode,
+        sender_id: currentUserId,
+        sender_username: currentUsername,
+        created_at: new Date().toISOString(),
+        is_sticker: true,
+        sticker_code: stickerCode
+    });
+    
     let encrypted = null;
     let iv = null;
     let mac = null;
     
     if (groupE2EE && groupE2EE.ready) {
-        const enc = await groupE2EE.encryptMessage(JSON.stringify({ type: 'sticker', code: stickerCode, id: stickerId }));
-        encrypted = enc.encrypted;
-        iv = enc.iv;
-        mac = enc.mac;  // ИСПРАВКА: Добавляем HMAC
+        try {
+            const enc = await groupE2EE.encryptMessage(JSON.stringify({ type: 'sticker', code: stickerCode, id: stickerId }));
+            encrypted = enc.encrypted;
+            iv = enc.iv;
+            mac = enc.mac;
+        } catch(e) {}
     }
     
-    if (groupSocket && groupSocket.connected) {
+    if (groupSocket?.connected) {
         groupSocket.emit('send_group_message', {
             group_id: parseInt(groupId),
             encrypted: encrypted,
             iv: iv,
-            mac: mac,  // ИСПРАВКА: Отправляем HMAC
+            mac: mac,
+            temp_id: tempId,
             is_sticker: true,
             sticker_id: stickerId,
             sticker_code: stickerCode
         });
     }
     
-    document.getElementById('stickerPanel').style.display = 'none';
+    const panel = document.getElementById('stickerPanel');
+    if (panel) panel.style.display = 'none';
 }
 
-async function loadGroupStickers() {
+// ========== ЗАГРУЗКА СТИКЕРОВ ==========
+async function loadStickers() {
     try {
-        const response = await fetch('/api/stickers');
-        const stickers = await response.json();
-        
-        const stickerGrid = document.querySelector('.sticker-grid');
-        if (stickerGrid) {
-            stickerGrid.innerHTML = '';
-            stickers.forEach(sticker => {
-                const stickerEl = document.createElement('div');
-                stickerEl.className = 'sticker-item';
-                stickerEl.innerHTML = `<span class="sticker-emoji">${sticker.code}</span>`;
-                stickerEl.onclick = () => sendGroupSticker(sticker.id, sticker.code);
-                stickerGrid.appendChild(stickerEl);
+        const res = await fetch('/api/stickers');
+        const stickers = await res.json();
+        const grid = document.querySelector('.sticker-grid');
+        if (grid) {
+            grid.innerHTML = '';
+            stickers.forEach(s => {
+                const el = document.createElement('div');
+                el.className = 'sticker-item';
+                el.innerHTML = `<span class="sticker-emoji" style="font-size: 32px;">${s.code}</span><span class="sticker-name">${s.name}</span>`;
+                el.onclick = () => sendSticker(s.id, s.code);
+                grid.appendChild(el);
             });
         }
-    } catch(e) {
-        console.error('Stickers error:', e);
-    }
+    } catch(e) {}
 }
 
-// ========== НОВЫЕ ФУНКЦИИ ДЛЯ КНОПОК ==========
-
-// Генерация ссылки-приглашения
-async function generateGroupInvite() {
-    console.log('🔗 Генерация ссылки-приглашения...');
-    try {
-        const response = await fetch(`/groups/${groupId}/invite`);
-        const data = await response.json();
-        
-        console.log('Ответ сервера:', data);
-        
-        if (data.invite_link) {
-            // Копируем ссылку в буфер обмена
-            await navigator.clipboard.writeText(data.invite_link);
-            showToast('🔗 Ссылка-приглашение скопирована в буфер обмена!', 'success');
-        } else {
-            showToast('❌ Ошибка: не удалось получить ссылку', 'error');
-        }
-    } catch (e) {
-        console.error('Ошибка генерации ссылки:', e);
-        showToast('❌ Ошибка генерации ссылки: ' + e.message, 'error');
-    }
-}
-
-// Диалог добавления участника
-function showAddMemberDialog() {
-    console.log('👥 Открытие диалога добавления участника...');
-    const username = prompt('Введите имя пользователя для добавления в группу:');
-    
-    if (!username || !username.trim()) {
+// ========== ОТПРАВКА ФАЙЛА ==========
+window.sendGroupFile = async function(file) {
+    if (!file) return;
+    if (!groupSocket?.connected) {
+        showToast('❌ Нет подключения', 'error');
         return;
     }
     
-    console.log('Добавляем пользователя:', username);
-    showToast(`⏳ Добавление ${username}...`, 'info');
+    await waitForE2EE();
     
-    fetch(`/groups/${groupId}/add-member`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': getCsrfToken()
-        },
-        body: JSON.stringify({ username: username.trim() })
-    })
-    .then(res => res.json())
-    .then(data => {
-        console.log('Ответ сервера:', data);
-        if (data.success) {
-            showToast(`✅ ${username} добавлен в группу`, 'success');
-            setTimeout(() => location.reload(), 1500);
-        } else {
-            showToast(`❌ ${data.error || 'Ошибка добавления'}`, 'error');
-        }
-    })
-    .catch(err => {
-        console.error('Ошибка:', err);
-        showToast('❌ Ошибка при добавлении пользователя', 'error');
+    console.log('📁 Отправка файла:', file.name);
+    
+    const tempId = 'temp_file_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+    pendingTempIds.add(tempId);
+    
+    addMessageToDOM({
+        id: tempId,
+        temp_id: tempId,
+        text: '',
+        sender_id: currentUserId,
+        sender_username: currentUsername,
+        created_at: new Date().toISOString(),
+        is_attachment: true,
+        attachment_name: file.name,
+        attachment_size: file.size
     });
+    
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+        const fileData = e.target.result;
+        const attachmentData = JSON.stringify({
+            type: 'attachment',
+            name: file.name,
+            mime: file.type,
+            size: file.size,
+            data: fileData
+        });
+        
+        let encrypted = attachmentData;
+        let iv = null;
+        let mac = null;
+        
+        if (groupE2EE && groupE2EE.ready) {
+            try {
+                const enc = await groupE2EE.encryptMessage(attachmentData);
+                encrypted = enc.encrypted;
+                iv = enc.iv;
+                mac = enc.mac;
+                console.log('🔐 Файл зашифрован');
+            } catch(e) {
+                console.error('Ошибка шифрования:', e);
+                iv = 'plain';
+                mac = '';
+            }
+        } else {
+            iv = 'plain';
+            mac = '';
+        }
+        
+        groupSocket.emit('send_group_message', {
+            group_id: parseInt(groupId),
+            encrypted: encrypted,
+            iv: iv,
+            mac: mac,
+            temp_id: tempId,
+            is_attachment: true,
+            attachment_name: file.name,
+            attachment_size: file.size,
+            attachment_type: file.type
+        });
+        
+        showToast(`✅ ${file.name} отправлен`, 'success');
+    };
+    reader.readAsDataURL(file);
+};
+
+// ========== СКРЕПКА (ПРЯМОЙ КЛИК) ==========
+function initAttachments() {
+    console.log('🔧 Настройка скрепки...');
+    
+    const btn = document.getElementById('groupAttachmentBtn');
+    const fileInput = document.getElementById('groupFileInput');
+    
+    if (!btn) {
+        console.error('❌ Кнопка скрепки не найдена');
+        return;
+    }
+    
+    if (!fileInput) {
+        console.error('❌ fileInput не найден');
+        return;
+    }
+    
+    console.log('✅ Кнопка скрепки найдена');
+    
+    // Прямой клик — сразу открываем выбор файла
+    btn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('📎 Клик по скрепке');
+        fileInput.click();
+    };
+    
+    // Обработчик выбора файла
+    fileInput.onchange = (e) => {
+        if (e.target.files && e.target.files[0]) {
+            console.log('📁 Выбран файл:', e.target.files[0].name);
+            window.sendGroupFile(e.target.files[0]);
+            fileInput.value = '';
+        }
+    };
+    
+    // Скрываем меню
+    const menu = document.getElementById('groupAttachmentMenu');
+    if (menu) menu.style.display = 'none';
 }
 
-// Переключение боковой панели участников
-function toggleMembersSidebar() {
-    const sidebar = document.getElementById('membersSidebar');
-    if (sidebar) {
-        const isVisible = sidebar.style.display === 'flex';
-        sidebar.style.display = isVisible ? 'none' : 'flex';
-        console.log('Боковая панель:', isVisible ? 'скрыта' : 'показана');
-    } else {
-        console.warn('Элемент membersSidebar не найден');
+// ========== КНОПКИ ==========
+function initButtons() {
+    const sendBtn = document.getElementById('sendGroupButton');
+    const input = document.getElementById('groupMessageInput');
+    
+    if (sendBtn) sendBtn.onclick = sendText;
+    if (input) {
+        input.onkeydown = (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendText();
+            }
+        };
+        input.oninput = function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 100) + 'px';
+            if (groupSocket?.connected) {
+                groupSocket.emit('group_typing', { group_id: parseInt(groupId) });
+            }
+        };
+    }
+    
+    const stickerBtn = document.getElementById('stickerBtn');
+    if (stickerBtn) {
+        stickerBtn.onclick = () => {
+            const panel = document.getElementById('stickerPanel');
+            if (panel) panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
+        };
+    }
+    
+    const membersBtn = document.getElementById('membersBtn');
+    if (membersBtn) {
+        membersBtn.onclick = () => {
+            const sidebar = document.getElementById('membersSidebar');
+            if (sidebar) sidebar.style.display = sidebar.style.display === 'flex' ? 'none' : 'flex';
+        };
+    }
+    
+    const closeSidebar = document.getElementById('closeSidebar');
+    if (closeSidebar) {
+        closeSidebar.onclick = () => {
+            const sidebar = document.getElementById('membersSidebar');
+            if (sidebar) sidebar.style.display = 'none';
+        };
+    }
+    
+    const inviteBtn = document.getElementById('inviteBtn');
+    if (inviteBtn) {
+        inviteBtn.onclick = async () => {
+            try {
+                const res = await fetch(`/groups/${groupId}/invite`);
+                const data = await res.json();
+                if (data.invite_link) {
+                    await navigator.clipboard.writeText(data.invite_link);
+                    showToast('🔗 Ссылка скопирована!', 'success');
+                }
+            } catch(e) {
+                showToast('❌ Ошибка', 'error');
+            }
+        };
+    }
+    
+    const addMemberBtn = document.getElementById('addMemberBtn');
+    if (addMemberBtn) {
+        addMemberBtn.onclick = () => {
+            const username = prompt('Введите имя пользователя:');
+            if (username) {
+                fetch(`/groups/${groupId}/add-member`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+                    body: JSON.stringify({ username: username.trim() })
+                }).then(res => res.json()).then(data => {
+                    if (data.success) {
+                        showToast(`✅ ${username} добавлен`, 'success');
+                        setTimeout(() => location.reload(), 1500);
+                    } else {
+                        showToast(`❌ ${data.error}`, 'error');
+                    }
+                });
+            }
+        };
     }
 }
 
-// Получение CSRF токена
 function getCsrfToken() {
     let token = document.querySelector('meta[name="csrf-token"]');
     if (token) return token.getAttribute('content');
@@ -307,125 +615,12 @@ function getCsrfToken() {
     return '';
 }
 
-// Удаление участника
-async function removeGroupMember(userId, username) {
-    if (!confirm(`Удалить участника "${username}" из группы?`)) return;
-    
-    try {
-        const response = await fetch(`/groups/${groupId}/remove-member`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCsrfToken()
-            },
-            body: JSON.stringify({ user_id: parseInt(userId) })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            showToast(`✅ ${username} удалён из группы`, 'success');
-            setTimeout(() => location.reload(), 1000);
-        } else {
-            showToast(`❌ ${data.error}`, 'error');
-        }
-    } catch (e) {
-        console.error('Ошибка удаления:', e);
-        showToast('❌ Ошибка удаления', 'error');
-    }
-}
-
-// ========== НАСТРОЙКА ОБРАБОТЧИКОВ ==========
-
-function setupGroupEventListeners() {
-    // Отправка сообщения
-    const sendBtn = document.getElementById('sendGroupButton');
-    if (sendBtn) {
-        sendBtn.onclick = sendGroupMessage;
-        console.log('✅ Кнопка отправки привязана');
-    } else {
-        console.warn('sendGroupButton не найден');
-    }
-    
-    // Поле ввода
-    const input = document.getElementById('groupMessageInput');
-    if (input) {
-        input.onkeydown = (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendGroupMessage();
-            }
-        };
-        
-        input.oninput = function() {
-            if (groupSocket && groupSocket.connected) {
-                groupSocket.emit('group_typing', { group_id: parseInt(groupId) });
-            }
-        };
-        console.log('✅ Поле ввода привязано');
-    } else {
-        console.warn('groupMessageInput не найден');
-    }
-    
-    // Кнопка стикеров
-    const stickerBtn = document.getElementById('stickerBtn');
-    if (stickerBtn) {
-        stickerBtn.onclick = () => {
-            const panel = document.getElementById('stickerPanel');
-            if (panel) {
-                panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
-            }
-        };
-        console.log('✅ Кнопка стикеров привязана');
-    }
-    
-    // Кнопка участников
-    const membersBtn = document.getElementById('membersBtn');
-    if (membersBtn) {
-        membersBtn.onclick = toggleMembersSidebar;
-        console.log('✅ Кнопка участников привязана');
-    } else {
-        console.warn('membersBtn не найден');
-    }
-    
-    // Кнопка добавления участника (для админов)
-    const addMemberBtn = document.getElementById('addMemberBtn');
-    if (addMemberBtn) {
-        addMemberBtn.onclick = showAddMemberDialog;
-        console.log('✅ Кнопка добавления участника привязана');
-    } else {
-        console.warn('addMemberBtn не найден (возможно, вы не админ)');
-    }
-    
-    // Кнопка приглашения (для админов)
-    const inviteBtn = document.getElementById('inviteBtn');
-    if (inviteBtn) {
-        inviteBtn.onclick = generateGroupInvite;
-        console.log('✅ Кнопка приглашения привязана');
-    } else {
-        console.warn('inviteBtn не найден (возможно, вы не админ)');
-    }
-    
-    // Кнопка закрытия боковой панели
-    const closeSidebar = document.getElementById('closeSidebar');
-    if (closeSidebar) {
-        closeSidebar.onclick = () => {
-            const sidebar = document.getElementById('membersSidebar');
-            if (sidebar) sidebar.style.display = 'none';
-        };
-        console.log('✅ Кнопка закрытия панели привязана');
-    }
-    
-    // Кнопки удаления участников
-    document.querySelectorAll('.remove-member-btn').forEach(btn => {
-        btn.onclick = () => {
-            const userId = btn.getAttribute('data-user-id');
-            const username = btn.getAttribute('data-username');
-            if (userId && username) {
-                removeGroupMember(userId, username);
-            }
-        };
-    });
+// ========== ВСПОМОГАТЕЛЬНЫЕ ==========
+function formatFileSize(bytes) {
+    if (!bytes) return '0 B';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
 function scrollToBottom() {
@@ -433,17 +628,18 @@ function scrollToBottom() {
     if (area) setTimeout(() => area.scrollTop = area.scrollHeight, 100);
 }
 
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/[&<>]/g, function(m) {
+        if (m === '&') return '&amp;';
+        if (m === '<') return '&lt;';
+        if (m === '>') return '&gt;';
+        return m;
+    });
 }
 
 function showToast(message, type = 'info') {
     const toast = document.createElement('div');
-    toast.className = `toast-notification ${type}`;
-    toast.innerHTML = `<span>${message}</span><button onclick="this.parentElement.remove()">×</button>`;
     toast.style.cssText = `
         position: fixed;
         bottom: 20px;
@@ -452,55 +648,11 @@ function showToast(message, type = 'info') {
         color: white;
         padding: 12px 20px;
         border-radius: 12px;
-        display: flex;
-        gap: 10px;
-        align-items: center;
         z-index: 10000;
-        animation: slideIn 0.3s ease;
+        font-size: 14px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
     `;
+    toast.innerHTML = `<span>${message}</span><button onclick="this.parentElement.remove()" style="background:none;border:none;color:white;margin-left:10px;cursor:pointer;">✕</button>`;
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 4000);
 }
-
-function playNotificationSound() {
-    try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        const context = new AudioCtx();
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.frequency.value = 880;
-        gain.gain.value = 0.3;
-        oscillator.start();
-        gain.gain.exponentialRampToValueAtTime(0.00001, context.currentTime + 0.3);
-        oscillator.stop(context.currentTime + 0.3);
-        if (context.state === 'suspended') context.resume();
-    } catch(e) {}
-}
-
-function showNotification(username, message) {
-    if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    if (document.hasFocus()) return;
-    
-    const notification = new Notification(`📨 ${username} в группе`, {
-        body: message.length > 60 ? message.substring(0, 60) + '...' : message,
-        icon: '/static/favicon.ico'
-    });
-    notification.onclick = () => window.focus();
-}
-
-// Запрашиваем разрешение на уведомления
-if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
-}
-
-// Добавляем стиль для анимации
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideIn {
-        from { transform: translateX(100%); opacity: 0; }
-        to { transform: translateX(0); opacity: 1; }
-    }
-`;
-document.head.appendChild(style);
