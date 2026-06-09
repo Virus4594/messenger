@@ -37,6 +37,14 @@ Fully containerised with Docker Compose, ready for demonstration or production u
 - **Docker Support**  
   Quick deployment with PostgreSQL, Redis, and the application bundled in Docker Compose.
 
+## 🎯 Perfect For
+
+- **Startups** needing a secure MVP for private communication
+- **Clinics & Law Firms** requiring HIPAA-compliant messaging
+- **Educational platforms** wanting built-in chat for students
+- **Enterprise teams** looking for a self-hosted Slack alternative
+- **Developers** who need a white-label messenger for their clients
+
 ## 📸 Screenshots
 
 | Chat with E2EE | Admin Panel | Encrypted DB |
@@ -75,7 +83,7 @@ Interested in buying this project or have questions?
 
 - **Telegram:** [@Virus_Dev_messege](https://t.me/Virus_Dev_messege)
 - **Email:** [virusvirusov22@gmail.com](mailto:virusvirusov22@gmail.com)
-- **GitHub Issues:** Feel free to open an issue in this repository.
+- **GitHub:** Private repository access after purchas
 
 ---
 
@@ -94,7 +102,7 @@ Upon purchase, you will receive full source code and a perpetual license to use,
 4. You receive full source code (Git repository access).
 5. I provide 7 days of support for setup and deployment.
 
-**Price: $19,000 (negotiable)
+**Price: $25,000 (negotiable)
 
 
 ## 🚀 Quick Start
