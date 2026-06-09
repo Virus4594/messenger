@@ -20,4 +20,4 @@ EXPOSE 5000
 ENV PORT=5000
 
 # Используем Gunicorn с eventlet для WebSocket
-CMD ["sh", "-c", "gunicorn app:app --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT"]
+CMD sh -c "flask db upgrade || (flask db init && flask db migrate -m 'initial' && flask db upgrade) && gunicorn app:app --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT"
