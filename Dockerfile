@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Устанавливаем системные зависимости, включая libmagic
+# Устанавливаем системные зависимости
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
@@ -16,7 +16,8 @@ COPY . .
 
 EXPOSE 5000
 
-# Для Render.com: используем PORT из переменной окружения
+# Для Render: используем PORT из переменной окружения
 ENV PORT=5000
 
-CMD ["python", "app.py"]
+# Используем Gunicorn с eventlet для WebSocket
+CMD ["sh", "-c", "gunicorn app:app --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT"]
