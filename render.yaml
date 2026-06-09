@@ -1,8 +1,13 @@
 services:
   - type: web
     name: messenger-demo
-    env: docker
-    plan: free  # НЕ БЕСПЛАТНЫЙ! WebSocket нужен план от $7/мес
+    runtime: python
+    plan: starter  # ← ОБЯЗАТЕЛЬНО starter или выше (для WebSocket)
+    region: frankfurt  # или frankfurt (Европа)
+    buildCommand: |
+      pip install -r requirements.txt
+    startCommand: |
+      gunicorn app:app --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT
     envVars:
       - key: SECRET_KEY
         generateValue: true
@@ -18,23 +23,24 @@ services:
           name: messenger-redis
           property: connectionString
       - key: SOCKETIO_MESSAGE_QUEUE
-        value: redis://${REDIS_URL}
-      - key: RENDER_WEB_SOCKET_SUPPORT
+        fromService:
+          type: redis
+          name: messenger-redis
+          property: connectionString
+      - key: WEBSOCKET_ENABLED
         value: "true"
-      - key: FORCE_WEBSOCKET
-        value: "true"
-    
-    # Важно: WebSocket требует особых заголовков
     healthCheckPath: /health
     autoDeploy: true
 
   - type: redis
     name: messenger-redis
-    plan: starter  # Redis нужен для Socket.IO
+    plan: starter  # Минимальный план для Redis
     maxmemoryPolicy: noeviction
-    ipAllowList: []  # Открыть доступ только для сервиса
+    ipAllowList: []  # Доступ только изнутри Render
 
-  - type: postgres
+  - type: postgresql
     name: messenger-db
     plan: starter
     ipAllowList: []
+    databaseName: messenger
+    databaseUser: messenger
