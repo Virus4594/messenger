@@ -70,7 +70,7 @@ Tech: Python/Flask, PostgreSQL, Redis, WebSocket, Docker
 | Backend        | Python 3, Flask, Flask‑SocketIO      |
 | Database       | PostgreSQL (via SQLAlchemy + Flask‑Migrate) |
 | Message Broker | Redis (WebSocket pub/sub)            |
-| Security       | Flask‑WTF (CSRF), Flask‑Limiter, PyOTP (2FA), RSA/AES‑GCM (E2EE) |
+| Security       | Flask‑WTF (CSRF), Flask‑Limiter, PyOTP (2FA), ECDH + AES‑GCM (E2EE) |
 | Frontend       | Vanilla JavaScript, Socket.IO client |
 | Deployment     | Docker, Docker Compose               |
 
@@ -83,7 +83,7 @@ Interested in buying this project or have questions?
 
 - **Telegram:** [@Virus_Dev_messege](https://t.me/Virus_Dev_messege)
 - **Email:** [virusvirusov22@gmail.com](mailto:virusvirusov22@gmail.com)
-- **GitHub:** Private repository access after purchas
+- **GitHub:** Private repository access after purchase
 
 ---
 
@@ -96,13 +96,33 @@ Upon purchase, you will receive full source code and a perpetual license to use,
 
 ## 💰 How to Purchase
 
-1. Contact me via Telegram or Email (see above).
-2. We agree on price and terms.
-3. Payment via [USDT / Bank Transfer / Escrow service like Flippa].
-4. You receive full source code (Git repository access).
-5. I provide 7 days of support for setup and deployment.
+1. **Contact me** via Telegram [@Virus_Dev_messege](https://t.me/Virus_Dev_messege) or email [virusvirusov22@gmail.com](mailto:virusvirusov22@gmail.com)
+2. **Agree on price** (starting at $25,000, negotiable based on licensing terms)
+3. **Payment via USDT (TRC-20 / ERC-20)** — Bybit or any wallet that supports USDT
+   - My Bybit wallet address will be provided upon agreement
+   - Alternative: Bank transfer (SWIFT) for US-based buyers
+4. **Escrow option:** I support Acquire.com or Flippa escrow for buyer protection (fee covered by buyer or split 50/50)
+5. **After payment confirmation,** you receive:
+   - Full source code (private Git repository access)
+   - Docker Compose configuration
+   - Database schemas and migrations
+   - 7 days of free technical support
 
-**Price: $25,000 (negotiable)
+**🚀 Delivery time:** Within 2 hours after payment confirmation
+
+**🔒 Privacy:** No data collection. No tracking. The code is yours forever.
+
+## 💸 Accepted Cryptocurrencies
+
+| Currency | Network | Notes |
+|----------|---------|-------|
+| **USDT** | TRC-20 / ERC-20 | Recommended (fast & low fees on TRC-20) |
+| **USDC** | ERC-20 / BEP-20 | Available upon request |
+| **BTC** | - | Higher fees, longer confirmation |
+
+> 💡 **I use Bybit** for all crypto transactions. Escrow available via Acquire.com or Flippa if you prefer traditional payment methods.
+
+**Price: $25,000 (negotiable)**
 
 
 ## 🚀 Quick Start
@@ -117,15 +137,16 @@ cp .env.example .env
 python3 -c "import secrets; print(secrets.token_hex(32))"
 # Insert the generated key into .env as SECRET_KEY=...
 
- 2. Start services
-```bash
+2. Start services
+bash
 docker-compose up -d --build
 
- 3. Create the owner account
-```bash
+3. Create the owner account
+bash
 docker exec -it messenger_app python create_owner.py
 
-
+Project Structure
+text
 messenger/
 ├── app.py                # Main Flask application
 ├── models.py             # SQLAlchemy models
@@ -137,4 +158,3 @@ messenger/
 ├── templates/            # Jinja2 templates (chat, feed, admin, etc.)
 ├── static/               # CSS, JS, avatars, Service Worker
 └── tests/                # Test suite
-
