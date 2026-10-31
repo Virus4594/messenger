@@ -94,37 +94,6 @@ Upon purchase, you will receive full source code and a perpetual license to use,
 
 ---
 
-## 💰 How to Purchase
-
-1. **Contact me** via Telegram [@Virus_Dev_messege](https://t.me/Virus_Dev_messege) or email [virusvirusov22@gmail.com](mailto:virusvirusov22@gmail.com)
-2. **Agree on price** (starting at $25,000, negotiable based on licensing terms)
-3. **Payment via USDT (TRC-20 / ERC-20)** — Bybit or any wallet that supports USDT
-   - My Bybit wallet address will be provided upon agreement
-   - Alternative: Bank transfer (SWIFT) for US-based buyers
-4. **Escrow option:** I support Acquire.com or Flippa escrow for buyer protection (fee covered by buyer or split 50/50)
-5. **After payment confirmation,** you receive:
-   - Full source code (private Git repository access)
-   - Docker Compose configuration
-   - Database schemas and migrations
-   - 7 days of free technical support
-
-**🚀 Delivery time:** Within 2 hours after payment confirmation
-
-**🔒 Privacy:** No data collection. No tracking. The code is yours forever.
-
-## 💸 Accepted Cryptocurrencies
-
-| Currency | Network | Notes |
-|----------|---------|-------|
-| **USDT** | TRC-20 / ERC-20 | Recommended (fast & low fees on TRC-20) |
-| **USDC** | ERC-20 / BEP-20 | Available upon request |
-| **BTC** | - | Higher fees, longer confirmation |
-
-> 💡 **I use Bybit** for all crypto transactions. Escrow available via Acquire.com or Flippa if you prefer traditional payment methods.
-
-**Price: $25,000 (negotiable)**
-
-
 ## 🚀 Quick Start
 
 ### 1. Clone and configure
